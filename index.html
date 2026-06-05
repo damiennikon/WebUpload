@@ -2,26 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Airscape Photos Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Airscape Dashboard</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0073aa">
+    
     <style>
         body { font-family: sans-serif; background: #f4f6f9; margin: 20px; color: #333; }
         .panel { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .settings-panel { background: #ffebee; border: 1px solid #ffcdd2; }
-        .workspace { display: flex; gap: 30px; }
-        .workspace .panel { flex: 1; margin-bottom: 0; }
+        .workspace { display: flex; flex-wrap: wrap; gap: 30px; }
+        .workspace .panel { flex: 1; min-width: 300px; margin-bottom: 0; }
         .form-group { margin-bottom: 15px; }
         label { display: block; font-weight: bold; margin-bottom: 5px; }
         input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         textarea { height: 100px; resize: vertical; }
-        button { background: #0073aa; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        button { background: #0073aa; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; width: 100%; margin-top: 10px; }
         button:hover { background: #005177; }
         #seoBtn { background: #23282d; }
         #seoBtn:hover { background: #111; }
-        #saveSettingsBtn { background: #c62828; }
+        #saveSettingsBtn { background: #c62828; width: auto; margin-top: 0; }
         #saveSettingsBtn:hover { background: #b71c1c; }
-        #statusMessage { margin-top: 15px; font-weight: bold; color: #0073aa; min-height: 20px; }
-        .settings-row { display: flex; flex-wrap: wrap; gap: 10px; }
+        #statusMessage { margin-top: 15px; font-weight: bold; color: #0073aa; min-height: 20px; text-align: center; }
+        .settings-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
         .settings-row input { flex: 1; min-width: 200px; }
     </style>
 </head>
@@ -84,5 +88,12 @@
     </div>
 
     <script src="app.js"></script>
+    <script>
+        // Register the Service Worker for PWA Installation
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+            .then(() => console.log('Service Worker Registered'));
+        }
+    </script>
 </body>
 </html>
