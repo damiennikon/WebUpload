@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Airscape Photos Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background: #f4f6f9; margin: 20px; color: #333; }
+        .panel { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .settings-panel { background: #ffebee; border: 1px solid #ffcdd2; }
+        .workspace { display: flex; gap: 30px; }
+        .workspace .panel { flex: 1; margin-bottom: 0; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        textarea { height: 100px; resize: vertical; }
+        button { background: #0073aa; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; }
+        button:hover { background: #005177; }
+        #seoBtn { background: #23282d; }
+        #seoBtn:hover { background: #111; }
+        #saveSettingsBtn { background: #c62828; }
+        #saveSettingsBtn:hover { background: #b71c1c; }
+        #statusMessage { margin-top: 15px; font-weight: bold; color: #0073aa; min-height: 20px; }
+        .settings-row { display: flex; flex-wrap: wrap; gap: 10px; }
+        .settings-row input { flex: 1; min-width: 200px; }
+    </style>
+</head>
+<body>
+
+    <h2>Airscape Photos Workspace</h2>
+    
+    <div class="panel settings-panel">
+        <h3>⚙️ Local Credentials Setup</h3>
+        <p style="margin: 0 0 10px 0; font-size: 13px; color: #555;">Keys are saved safely in your own browser's local storage. They never touch a public server.</p>
+        <div class="settings-row">
+            <input type="text" id="settingUser" placeholder="WordPress Username (e.g., admin)">
+            <input type="password" id="settingPass" placeholder="WordPress Application Password">
+            <input type="password" id="settingGemini" placeholder="Gemini API Key">
+            <button id="saveSettingsBtn">Save Credentials</button>
+        </div>
+        <div id="settingsStatus" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #c62828;"></div>
+    </div>
+
+    <div class="workspace">
+        <div class="panel">
+            <h3>1. Selection & Target</h3>
+            <div class="form-group">
+                <label for="imageInput">Choose Photo</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            
+            <div class="form-group">
+                <label for="categoryInput">Target Gallery Page</label>
+                <select id="categoryInput">
+                    <option value="10">Aircraft</option>
+                    <option value="11">Animals</option>
+                    <option value="12">Astrophotography</option>
+                    <option value="13">Cityscapes</option>
+                    <option value="14">Landscapes</option>
+                </select>
+            </div>
+            
+            <button id="seoBtn">✨ SEO Me</button>
+        </div>
+
+        <div class="panel">
+            <h3>2. Review Metadata</h3>
+            <div class="form-group">
+                <label for="wpTitle">Image Title</label>
+                <input type="text" id="wpTitle">
+            </div>
+            <div class="form-group">
+                <label for="wpAltText">Alt Text (Accessibility)</label>
+                <input type="text" id="wpAltText">
+            </div>
+            <div class="form-group">
+                <label for="wpDescription">Description</label>
+                <textarea id="wpDescription"></textarea>
+            </div>
+            
+            <button id="uploadButton">Upload to Gallery</button>
+            <div id="statusMessage"></div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
