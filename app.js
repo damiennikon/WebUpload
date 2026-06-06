@@ -119,8 +119,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
     formData.append('title', title);
     formData.append('alt_text', altText);
     formData.append('description', description);
-    
-    // Note: 'media_category' corresponds to the target taxonomy structure from your media taxonomy plugin
     formData.append('media_category', categoryId);
 
     try {
@@ -130,12 +128,24 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
             body: formData
         });
 
+        // Read the raw response from the server FIRST so it doesn't crash on HTML
+        const responseText = await response.text();
+
         if (response.ok) {
-            const data = await response.json();
+            const data = JSON.parse(responseText);
             statusMessage.innerText = `Success! Image pushed to gallery. Media ID: ${data.id}`;
         } else {
-            const err = await response.json();
-            statusMessage.innerText = `Upload failed: ${err.message}`;
+            // Check if the server threw an HTML webpage at us instead of a proper error
+            if (responseText.trim().startsWith('<')) {
+                // Extract just the <title> of the HTML page to find the real error
+                const titleMatch = responseText.match(/<title>(.*?)<\/title>/i);
+                const errorTitle = titleMatch ? titleMatch[1] : "Unknown Server HTML Error";
+                statusMessage.innerText = `Server Blocked Upload: ${errorTitle}`;
+            } else {
+                // If it's a standard WordPress JSON error, parse it normally
+                const err = JSON.parse(responseText);
+                statusMessage.innerText = `WP Error: ${err.message}`;
+            }
         }
     } catch (error) {
         statusMessage.innerText = `Network connection error: ${error.message}`;
