@@ -122,7 +122,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
     formData.append('media_category', categoryId);
 
     try {
-        const response = await fetch('[https://airscapephotos.com/wp-json/wp/v2/media](https://airscapephotos.com/wp-json/wp/v2/media)', {
+        const response = await fetch('https://airscapephotos.com/wp-json/wp/v2/media', {
             method: 'POST',
             headers: { 'Authorization': creds.wpAuth },
             body: formData
