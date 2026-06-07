@@ -41,6 +41,59 @@ function fileToGenerativePart(file) {
     });
 }
 
+// --- INVISIBLE CANVAS COMPRESSION ---
+function compressImage(file, maxWidth, maxHeight, quality) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = event => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                // Calculate new dimensions while keeping the exact aspect ratio
+                let width = img.width;
+                let height = img.height;
+
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+                }
+
+                // Draw the resized image onto an invisible canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Convert the canvas back into a lightweight JPEG file
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('Canvas compression failed.'));
+                        return;
+                    }
+                    // Force the filename to end in .jpg so WordPress accepts it smoothly
+                    const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
+                    const compressedFile = new File([blob], newFileName, {
+                        type: 'image/jpeg',
+                        lastModified: Date.now()
+                    });
+                    resolve(compressedFile);
+                }, 'image/jpeg', quality);
+            };
+            img.onerror = error => reject(error);
+        };
+        reader.onerror = error => reject(error);
+    });
+}
+
 // --- FEATURE 1: AI GENERATED SEO ---
 document.getElementById('seoBtn').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
@@ -91,7 +144,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     }
 });
 
-// --- FEATURE 2: TARGETED GALLERY UPLOAD ---
+// --- FEATURE 2: TARGETED GALLERY UPLOAD (WITH AUTO-COMPRESS) ---
 document.getElementById('uploadButton').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
@@ -106,23 +159,29 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         return;
     }
 
-    statusMessage.innerText = 'Uploading to website gallery...';
-    const file = fileInput.files[0];
-
-    const title = document.getElementById('wpTitle').value;
-    const altText = document.getElementById('wpAltText').value;
-    const description = document.getElementById('wpDescription').value;
-    const categoryId = document.getElementById('categoryInput').value;
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('title', title);
-    formData.append('alt_text', altText);
-    formData.append('description', description);
-    formData.append('media_category', categoryId);
+    statusMessage.innerText = 'Compressing image for upload...';
+    let file = fileInput.files[0];
 
     try {
-        const response = await fetch('https://airscapephotos.com/wp-json/wp/v2/media', {
+        // Intercept and compress: Max 2048px wide/high, 80% JPEG quality
+        // This turns a 50MB raw file into a ~1MB web-ready file in milliseconds
+        file = await compressImage(file, 2048, 2048, 0.8);
+        
+        statusMessage.innerText = 'Uploading optimized image to gallery...';
+
+        const title = document.getElementById('wpTitle').value;
+        const altText = document.getElementById('wpAltText').value;
+        const description = document.getElementById('wpDescription').value;
+        const categoryId = document.getElementById('categoryInput').value;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('title', title);
+        formData.append('alt_text', altText);
+        formData.append('description', description);
+        formData.append('media_category', categoryId);
+
+        const response = await fetch('[https://airscapephotos.com/wp-json/wp/v2/media](https://airscapephotos.com/wp-json/wp/v2/media)', {
             method: 'POST',
             headers: { 'Authorization': creds.wpAuth },
             body: formData
@@ -137,17 +196,16 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         } else {
             // Check if the server threw an HTML webpage at us instead of a proper error
             if (responseText.trim().startsWith('<')) {
-                // Extract just the <title> of the HTML page to find the real error
                 const titleMatch = responseText.match(/<title>(.*?)<\/title>/i);
                 const errorTitle = titleMatch ? titleMatch[1] : "Unknown Server HTML Error";
                 statusMessage.innerText = `Server Blocked Upload: ${errorTitle}`;
             } else {
-                // If it's a standard WordPress JSON error, parse it normally
                 const err = JSON.parse(responseText);
                 statusMessage.innerText = `WP Error: ${err.message}`;
             }
         }
     } catch (error) {
-        statusMessage.innerText = `Network connection error: ${error.message}`;
+        statusMessage.innerText = `Error: ${error.message}`;
+        console.error(error);
     }
 });
