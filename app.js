@@ -144,7 +144,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     }
 });
 
-// --- FEATURE 2: TARGETED GALLERY UPLOAD (WITH AUTO-COMPRESS) ---
+// --- FEATURE 2: TARGETED GALLERY UPLOAD (TWO-STEP FIREWALL BYPASS) ---
 document.getElementById('uploadButton').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
@@ -163,49 +163,58 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
     let file = fileInput.files[0];
 
     try {
-        // Intercept and compress: Max 2048px wide/high, 80% JPEG quality
-        // This turns a 50MB raw file into a ~1MB web-ready file in milliseconds
+        // Compress the image before uploading
         file = await compressImage(file, 2048, 2048, 0.8);
-        
-        statusMessage.innerText = 'Uploading optimized image to gallery...';
+        statusMessage.innerText = 'Uploading optimized image...';
 
         const title = document.getElementById('wpTitle').value;
         const altText = document.getElementById('wpAltText').value;
         const description = document.getElementById('wpDescription').value;
         const categoryId = document.getElementById('categoryInput').value;
 
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('title', title);
-        formData.append('alt_text', altText);
-        formData.append('description', description);
-        formData.append('media_category', categoryId);
-
-        const response = await fetch('[https://airscapephotos.com/wp-json/wp/v2/media](https://airscapephotos.com/wp-json/wp/v2/media)', {
+        // STEP 1: Upload Raw Binary Image (Sneaks right past server firewalls)
+        const imageResponse = await fetch('[https://airscapephotos.com/wp-json/wp/v2/media](https://airscapephotos.com/wp-json/wp/v2/media)', {
             method: 'POST',
-            headers: { 'Authorization': creds.wpAuth },
-            body: formData
+            headers: {
+                'Authorization': creds.wpAuth,
+                'Content-Disposition': `attachment; filename="${file.name}"`,
+                'Content-Type': 'image/jpeg'
+            },
+            body: file
         });
 
-        // Read the raw response from the server FIRST so it doesn't crash on HTML
-        const responseText = await response.text();
-
-        if (response.ok) {
-            const data = JSON.parse(responseText);
-            statusMessage.innerText = `Success! Image pushed to gallery. Media ID: ${data.id}`;
-        } else {
-            // Check if the server threw an HTML webpage at us instead of a proper error
-            if (responseText.trim().startsWith('<')) {
-                const titleMatch = responseText.match(/<title>(.*?)<\/title>/i);
-                const errorTitle = titleMatch ? titleMatch[1] : "Unknown Server HTML Error";
-                statusMessage.innerText = `Server Blocked Upload: ${errorTitle}`;
-            } else {
-                const err = JSON.parse(responseText);
-                statusMessage.innerText = `WP Error: ${err.message}`;
-            }
+        if (!imageResponse.ok) {
+            const errText = await imageResponse.text();
+            throw new Error(`Upload Blocked: ${imageResponse.status}.`);
         }
+
+        const imageData = await imageResponse.json();
+        const newMediaId = imageData.id;
+        statusMessage.innerText = 'Image saved! Linking to gallery...';
+
+        // STEP 2: Update the uploaded image with SEO and Category data via JSON
+        const updateResponse = await fetch(`https://airscapephotos.com/wp-json/wp/v2/media/${newMediaId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': creds.wpAuth,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                title: title,
+                alt_text: altText,
+                description: description,
+                media_category: [parseInt(categoryId)]
+            })
+        });
+
+        if (updateResponse.ok) {
+            statusMessage.innerText = `Success! Image is now live in the gallery.`;
+        } else {
+            statusMessage.innerText = `Uploaded safely, but category link failed.`;
+        }
+
     } catch (error) {
-        statusMessage.innerText = `Error: ${error.message}`;
+        statusMessage.innerText = `Network Error: ${error.message}`;
         console.error(error);
     }
 });
