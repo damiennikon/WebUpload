@@ -7,14 +7,12 @@ document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     setTimeout(() => { document.getElementById('settingsStatus').innerText = ''; }, 3000);
 });
 
-// Auto-populate input boxes if credentials exist on this device
 window.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('wpUser')) document.getElementById('settingUser').value = localStorage.getItem('wpUser');
     if (localStorage.getItem('wpPass')) document.getElementById('settingPass').value = localStorage.getItem('wpPass');
     if (localStorage.getItem('geminiKey')) document.getElementById('settingGemini').value = localStorage.getItem('geminiKey');
 });
 
-// Structural helper to safely grab dynamic keys
 function getCredentials() {
     const user = localStorage.getItem('wpUser');
     const pass = localStorage.getItem('wpPass');
@@ -26,16 +24,13 @@ function getCredentials() {
     };
 }
 
-// Convert image binary to Base64 format for Gemini API pipeline
 function fileToGenerativePart(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
             if (reader.result) {
                 const base64Data = reader.result.split(',')[1];
-                resolve({
-                    inlineData: { data: base64Data, mimeType: file.type }
-                });
+                resolve({ inlineData: { data: base64Data, mimeType: file.type } });
             } else {
                 reject(new Error("Failed to process file into text format."));
             }
@@ -45,16 +40,80 @@ function fileToGenerativePart(file) {
     });
 }
 
+// --- JPEG HEADER PARSER (RAM SAFE) ---
+// Only reads the first 128KB to find EXIF/SOF dimensions without decoding the image
+function getJpegDimensions(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        const slice = file.slice(0, 128 * 1024);
+        
+        reader.onload = function(e) {
+            const view = new DataView(e.target.result);
+            if (view.byteLength < 2 || view.getUint16(0, false) !== 0xFFD8) {
+                return reject(new Error("Not a standard JPEG."));
+            }
+            
+            let offset = 2;
+            while (offset < view.byteLength - 2) {
+                const marker = view.getUint16(offset, false);
+                
+                if (marker === 0xFFC0 || marker === 0xFFC1 || marker === 0xFFC2) {
+                    const height = view.getUint16(offset + 5, false);
+                    const width = view.getUint16(offset + 7, false);
+                    return resolve({ width, height });
+                }
+                
+                if ((marker >= 0xFFE0 && marker <= 0xFFEF) || marker === 0xFFDB || marker === 0xFFC4 || marker === 0xFFDD || marker === 0xFFFE) {
+                    const length = view.getUint16(offset + 2, false);
+                    offset += 2 + length;
+                } else {
+                    offset += 1;
+                }
+            }
+            reject(new Error("Dimensions not found in chunk."));
+        };
+        reader.onerror = () => reject(new Error("File read error."));
+        reader.readAsArrayBuffer(slice);
+    });
+}
+
 // --- HYBRID CANVAS COMPRESSION (HARDWARE + DOM FALLBACK) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
-    return new Promise((resolve, reject) => {
-        
-        // Helper to handle the actual resizing math and canvas drawing
-        const doCanvasCompression = (imgSource) => {
+    return new Promise(async (resolve, reject) => {
+        let targetW = maxWidth;
+        let targetH = maxHeight;
+        let hasPrecalcDims = false;
+
+        // Try to parse dimensions purely to feed the hardware decoder (prevents VRAM crash)
+        try {
+            const dims = await getJpegDimensions(file);
+            let w = dims.width;
+            let h = dims.height;
+
+            if (w > h) {
+                if (w > maxWidth) {
+                    h = Math.round((h * maxWidth) / w);
+                    w = maxWidth;
+                }
+            } else {
+                if (height > maxHeight) {
+                    w = Math.round((w * maxHeight) / h);
+                    h = maxHeight;
+                }
+            }
+            targetW = w;
+            targetH = h;
+            hasPrecalcDims = true;
+        } catch (err) {
+            console.warn("Dimension pre-calc skipped: ", err.message);
+        }
+
+        const doCanvasCompression = (imgSource, objectUrlToRevoke = null) => {
             try {
                 let width = imgSource.width;
                 let height = imgSource.height;
 
+                // Secondary safety check if hardware resize wasn't applied
                 if (width > height) {
                     if (width > maxWidth) {
                         height = Math.round((height * maxWidth) / width);
@@ -73,9 +132,12 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 const ctx = canvas.getContext('2d');
                 
                 ctx.drawImage(imgSource, 0, 0, width, height);
+                
+                // Safely revoke memory ONLY after drawing is complete
+                if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
 
                 canvas.toBlob((blob) => {
-                    if (imgSource.close) imgSource.close(); // Clean up bitmap if it exists
+                    if (imgSource.close) imgSource.close();
                     
                     if (!blob) {
                         reject(new Error('Canvas blob generation failed.'));
@@ -90,40 +152,43 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 }, 'image/jpeg', quality);
                 
             } catch (err) {
+                if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
                 if (imgSource.close) imgSource.close();
                 reject(new Error(`Compression process crashed: ${err.message}`));
             }
         };
 
-        // Fallback method (ObjectURL + DOM Image)
         const runFallbackMethod = () => {
             console.warn("Using ObjectURL fallback compression...");
             const img = new Image();
+            const objUrl = URL.createObjectURL(file);
+            
             img.onload = () => {
-                URL.revokeObjectURL(img.src);
-                doCanvasCompression(img);
+                // Pass objUrl to be revoked safely inside doCanvasCompression
+                doCanvasCompression(img, objUrl);
             };
             img.onerror = () => {
-                URL.revokeObjectURL(img.src);
+                URL.revokeObjectURL(objUrl);
                 reject(new Error('Browser refused to load the image into memory via fallback.'));
             };
-            try {
-                img.src = URL.createObjectURL(file);
-            } catch (err) {
-                reject(new Error(`Fallback object URL failed: ${err.message}`));
-            }
+            img.src = objUrl;
         };
 
-        // Plan A: Try Hardware Acceleration
+        // Plan A: Try Hardware Acceleration (Now protected by pre-calculated dimensions)
         if (window.createImageBitmap) {
-            createImageBitmap(file).then(bitmap => {
+            const bitmapOptions = hasPrecalcDims ? { 
+                resizeWidth: targetW, 
+                resizeHeight: targetH, 
+                resizeQuality: 'high' 
+            } : {};
+
+            createImageBitmap(file, bitmapOptions).then(bitmap => {
                 doCanvasCompression(bitmap);
             }).catch(err => {
-                // If the hardware decoder hits the memory cap, silently switch to Plan B
+                console.warn("createImageBitmap failed due to hardware limits, trying fallback...", err);
                 runFallbackMethod();
             });
         } else {
-            // If browser doesn't support hardware decoding at all
             runFallbackMethod();
         }
     });
@@ -133,7 +198,6 @@ function compressImage(file, maxWidth, maxHeight, quality) {
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        // Strict string literal to prevent markdown mangling
         const wpEndpoint = "https://airscapephotos.com/wp-json/wp/v2/media";
         
         xhr.open('POST', wpEndpoint, true);
@@ -205,7 +269,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
 
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        // Pure string concatenation to defeat markdown mangling bugs
+        // FIXED: Pure string URL to bypass the literal markdown string bug
         const geminiUrl = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + creds.gemini;
 
         const response = await fetchWithRetry(geminiUrl, {
@@ -271,7 +335,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        // Pure string concatenation
+        // FIXED: Pure string URL bypass
         const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId;
         
         const updateResponse = await fetch(updateUrl, {
@@ -297,7 +361,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
             
-            // Clear the deck for the next shot
             document.getElementById('imageInput').value = '';
             document.getElementById('wpTitle').value = '';
             document.getElementById('wpAltText').value = '';
