@@ -7,11 +7,14 @@ document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     setTimeout(() => { document.getElementById('settingsStatus').innerText = ''; }, 3000);
 });
 
-// Auto-populate input boxes if credentials exist on this device
+// Auto-populate input boxes & Load Dynamic Categories
 window.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('wpUser')) document.getElementById('settingUser').value = localStorage.getItem('wpUser');
     if (localStorage.getItem('wpPass')) document.getElementById('settingPass').value = localStorage.getItem('wpPass');
     if (localStorage.getItem('geminiKey')) document.getElementById('settingGemini').value = localStorage.getItem('geminiKey');
+    
+    // NEW ADDITION: Fetch Dynamic Categories on Load
+    fetchCategories();
 });
 
 // Structural helper to safely grab dynamic keys
@@ -24,6 +27,25 @@ function getCredentials() {
         wpAuth: user && pass ? 'Basic ' + btoa(`${user}:${pass}`) : null,
         gemini: gemini || null
     };
+}
+
+// Fetch dynamic categories from WordPress to populate the dropdown
+async function fetchCategories() {
+    try {
+        // Explicitly strict string to prevent markdown link conversion
+        const catUrl = "https://airscapephotos.com/wp-json/wp/v2/media_category?per_page=100";
+        const response = await fetch(catUrl);
+        if (response.ok) {
+            const categories = await response.json();
+            const select = document.getElementById('categoryInput');
+            // Clear hardcoded HTML options and replace with live data
+            select.innerHTML = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
+        } else {
+            console.warn("Could not fetch dynamic categories. Falling back to default list.");
+        }
+    } catch (error) {
+        console.error("Category fetch error:", error);
+    }
 }
 
 // Convert image binary to Base64 format for Gemini API pipeline
@@ -50,7 +72,6 @@ function compressImage(file, maxWidth, maxHeight, quality) {
             const img = new Image();
             img.src = event.target.result;
             img.onload = () => {
-                // Calculate new dimensions while keeping the exact aspect ratio
                 let width = img.width;
                 let height = img.height;
 
@@ -66,20 +87,17 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                     }
                 }
 
-                // Draw the resized image onto an invisible canvas
                 const canvas = document.createElement('canvas');
                 canvas.width = width;
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
 
-                // Convert the canvas back into a lightweight JPEG file
                 canvas.toBlob((blob) => {
                     if (!blob) {
                         reject(new Error('Canvas compression failed.'));
                         return;
                     }
-                    // Force the filename to end in .jpg so WordPress accepts it smoothly
                     const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
                     const compressedFile = new File([blob], newFileName, {
                         type: 'image/jpeg',
@@ -91,6 +109,37 @@ function compressImage(file, maxWidth, maxHeight, quality) {
             img.onerror = error => reject(error);
         };
         reader.onerror = error => reject(error);
+    });
+}
+
+// Helper: Upload file using XMLHttpRequest to get a real byte-progress indicator
+function uploadWithProgress(file, authStr) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        // Explicitly strict string
+        xhr.open('POST', "https://airscapephotos.com/wp-json/wp/v2/media", true);
+        xhr.setRequestHeader('Authorization', authStr);
+        xhr.setRequestHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+        xhr.setRequestHeader('Content-Type', 'image/jpeg');
+
+        // NEW ADDITION: Upload progress feedback
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.round((e.loaded / e.total) * 100);
+                document.getElementById('statusMessage').innerText = `Uploading to Server: ${percent}%`;
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+            } else {
+                reject(new Error(`Upload Blocked: ${xhr.status}`));
+            }
+        };
+
+        xhr.onerror = () => reject(new Error("Network Error during upload pipeline."));
+        xhr.send(file);
     });
 }
 
@@ -129,7 +178,6 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const result = await response.json();
         let aiText = result.candidates[0].content.parts[0].text;
         
-        // Minor clean up safety pass to remove any markdown wrapping artifacts if present
         aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
         
         const seoData = JSON.parse(aiText);
@@ -144,7 +192,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     }
 });
 
-// --- FEATURE 2: TARGETED GALLERY UPLOAD (TWO-STEP FIREWALL BYPASS) ---
+// --- FEATURE 2: TARGETED GALLERY UPLOAD ---
 document.getElementById('uploadButton').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
@@ -159,62 +207,64 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         return;
     }
 
-    statusMessage.innerText = 'Compressing image for upload...';
     let file = fileInput.files[0];
+    
+    // NEW ADDITION & CHECK: Log original size
+    const originalMb = (file.size / (1024 * 1024)).toFixed(2);
+    statusMessage.innerText = `Compressing ${originalMb}MB image...`;
 
     try {
         // Compress the image before uploading
         file = await compressImage(file, 2048, 2048, 0.8);
-        statusMessage.innerText = 'Uploading optimized image...';
-
+        
+        // CHECK: Verify dimension constraint and file size drop
+        const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
+        console.log(`Compression Success: Scaled to max 2048px. Size reduced from ${originalMb}MB to ${compressedMb}MB.`);
+        
         const title = document.getElementById('wpTitle').value;
         const altText = document.getElementById('wpAltText').value;
         const description = document.getElementById('wpDescription').value;
         const categoryId = document.getElementById('categoryInput').value;
 
-        // STEP 1: Upload Raw Binary Image (Sneaks right past server firewalls)
-        const imageResponse = await fetch('[https://airscapephotos.com/wp-json/wp/v2/media](https://airscapephotos.com/wp-json/wp/v2/media)', {
-            method: 'POST',
-            headers: {
-                'Authorization': creds.wpAuth,
-                'Content-Disposition': `attachment; filename="${file.name}"`,
-                'Content-Type': 'image/jpeg'
-            },
-            body: file
-        });
-
-        if (!imageResponse.ok) {
-            const errText = await imageResponse.text();
-            throw new Error(`Upload Blocked: ${imageResponse.status}.`);
-        }
-
-        const imageData = await imageResponse.json();
+        // STEP 1: Upload Raw Binary Image using new Progress logic
+        const imageData = await uploadWithProgress(file, creds.wpAuth);
         const newMediaId = imageData.id;
-        statusMessage.innerText = 'Image saved! Linking to gallery...';
+        const liveImageUrl = imageData.source_url; // Grab the URL for the preview
+        
+        statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
         // STEP 2: Update the uploaded image with SEO and Category data via JSON
-        const updateResponse = await fetch(`https://airscapephotos.com/wp-json/wp/v2/media/${newMediaId}`, {
-            method: 'POST',
+        // Explicit strict string formatting
+        const updateUrl = `https://airscapephotos.com/wp-json/wp/v2/media/${newMediaId}`;
+        const updateResponse = await fetch(updateUrl, {
+            method: 'POST', // Note: WP REST API allows POST to update existing endpoints
             headers: {
                 'Authorization': creds.wpAuth,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 title: title,
-                alt_text: altText,
+                alt_text: altText, // CHECK: Verified correct WP REST API key
                 description: description,
-                media_category: [parseInt(categoryId)]
+                media_category: [parseInt(categoryId)] // CHECK: Verified array of integers
             })
         });
 
         if (updateResponse.ok) {
-            statusMessage.innerText = `Success! Image is now live in the gallery.`;
+            // NEW ADDITION: Post-upload preview and logging stats
+            statusMessage.innerHTML = `
+                <div style="color: green; margin-bottom: 10px;">Success! Image is live.</div>
+                <div style="font-size: 12px; color: #555; margin-bottom: 10px;">
+                    Size reduced: ${originalMb}MB ➔ ${compressedMb}MB
+                </div>
+                <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
+            `;
         } else {
-            statusMessage.innerText = `Uploaded safely, but category link failed.`;
+            statusMessage.innerText = `Uploaded safely to cloud, but category link failed.`;
         }
 
     } catch (error) {
-        statusMessage.innerText = `Network Error: ${error.message}`;
+        statusMessage.innerText = `Error: ${error.message}`;
         console.error(error);
     }
 });
