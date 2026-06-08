@@ -90,14 +90,16 @@ function compressImage(file, maxWidth, maxHeight, quality) {
     });
 }
 
-// Helper: Upload file using XMLHttpRequest to get a real byte-progress indicator
+// --- NEW STANDARD UPLOAD LOGIC ---
+// Helper: Upload file using XMLHttpRequest and FormData to bypass CORS strictly
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', "https://airscapephotos.com/wp-json/wp/v2/media", true);
         xhr.setRequestHeader('Authorization', authStr);
-        xhr.setRequestHeader('Content-Disposition', `attachment; filename="${file.name}"`);
-        xhr.setRequestHeader('Content-Type', 'image/jpeg');
+        
+        // Removed Content-Disposition and Content-Type.
+        // The browser automatically generates the correct, CORS-friendly headers for FormData.
 
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
@@ -115,7 +117,12 @@ function uploadWithProgress(file, authStr) {
         };
 
         xhr.onerror = () => reject(new Error("Network Error during upload pipeline."));
-        xhr.send(file);
+        
+        // Package the file in standard FormData
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+        
+        xhr.send(formData);
     });
 }
 
@@ -141,7 +148,6 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        // Reverted to the active gemini-2.5-flash model
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
