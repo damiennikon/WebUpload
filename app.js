@@ -90,7 +90,7 @@ function compressImage(file, maxWidth, maxHeight, quality) {
     });
 }
 
-// --- NEW STANDARD UPLOAD LOGIC ---
+// --- STANDARD UPLOAD LOGIC ---
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -220,7 +220,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 title: title,
                 alt_text: altText, 
                 description: description,
-                categories: [categoryId] // <-- THE 1-WORD FIX IS HERE
+                categories: [categoryId] 
             })
         });
 
@@ -232,6 +232,14 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 </div>
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
+            
+            // --- NEW ADDITION: Clear the deck for the next shot ---
+            document.getElementById('imageInput').value = '';
+            document.getElementById('wpTitle').value = '';
+            document.getElementById('wpAltText').value = '';
+            document.getElementById('wpDescription').value = '';
+            document.getElementById('categoryInput').selectedIndex = 0;
+            
         } else {
             statusMessage.innerText = `Uploaded safely to cloud, but category link failed.`;
         }
