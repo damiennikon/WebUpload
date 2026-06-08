@@ -121,7 +121,28 @@ function uploadWithProgress(file, authStr) {
     });
 }
 
-// --- FEATURE 1: AI GENERATED SEO ---
+// --- FEATURE 1: AI GENERATED SEO (WITH AUTO-RETRY) ---
+
+// Helper function to automatically retry failed server requests
+async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
+    for (let i = 0; i < retries; i++) {
+        const response = await fetch(url, options);
+        if (response.ok) return response;
+        
+        // If it's a 500-level server error, wait and try again
+        if (response.status >= 500 && response.status < 600) {
+            console.warn(`Server busy (${response.status}). Retrying in ${delay}ms... (Attempt ${i + 1} of ${retries})`);
+            document.getElementById('statusMessage').innerText = `Server busy. Auto-retrying (Attempt ${i + 1}/3)...`;
+            await new Promise(res => setTimeout(res, delay));
+            delay *= 2; // Double the wait time for the next attempt
+        } else {
+            // If it's a 400-level error (like a bad API key), fail immediately
+            throw new Error(`API Error: ${response.status}`);
+        }
+    }
+    throw new Error('Google API servers are currently unreachable after multiple attempts.');
+}
+
 document.getElementById('seoBtn').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
@@ -143,15 +164,14 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
+        // Using our new self-healing fetch function
+        const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{ parts: [ { text: prompt }, imagePart ] }]
             })
         });
-
-        if (!response.ok) throw new Error('Failed to reach Gemini API backend.');
 
         const result = await response.json();
         let aiText = result.candidates[0].content.parts[0].text;
@@ -165,7 +185,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         
         statusMessage.innerText = 'SEO optimization ready for review.';
     } catch (error) {
-        statusMessage.innerText = 'Error generating SEO data. Verify your key or console logs.';
+        statusMessage.innerText = `Error: ${error.message}`;
         console.error(error);
     }
 });
