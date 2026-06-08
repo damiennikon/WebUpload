@@ -26,17 +26,22 @@ function getCredentials() {
     };
 }
 
-// Convert image binary to Base64 format for Gemini API pipeline
+// Convert image binary to Base64 format for Gemini API pipeline (WITH ERROR FIX)
 function fileToGenerativePart(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-            const base64Data = reader.result.split(',')[1];
-            resolve({
-                inlineData: { data: base64Data, mimeType: file.type }
-            });
+            if (reader.result) {
+                const base64Data = reader.result.split(',')[1];
+                resolve({
+                    inlineData: { data: base64Data, mimeType: file.type }
+                });
+            } else {
+                reject(new Error("Failed to process file into text format."));
+            }
         };
-        reader.onerror = reject;
+        // Catch silent mobile crashes instead of returning 'undefined'
+        reader.onerror = () => reject(new Error("Mobile browser blocked file read for AI."));
         reader.readAsDataURL(file);
     });
 }
@@ -44,7 +49,6 @@ function fileToGenerativePart(file) {
 // --- INVISIBLE CANVAS COMPRESSION (HARDWARE ACCELERATED) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-        // Modern approach: Bypasses the DOM and uses hardware-accelerated decoding
         if (!window.createImageBitmap) {
             reject(new Error('Your browser does not support modern image compression.'));
             return;
@@ -55,7 +59,6 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 let width = bitmap.width;
                 let height = bitmap.height;
 
-                // Calculate aspect ratio
                 if (width > height) {
                     if (width > maxWidth) {
                         height = Math.round((height * maxWidth) / width);
@@ -73,11 +76,9 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 
-                // Draw the hardware-decoded bitmap onto the canvas
                 ctx.drawImage(bitmap, 0, 0, width, height);
 
                 canvas.toBlob((blob) => {
-                    // Clean up the bitmap from memory immediately
                     bitmap.close(); 
                     
                     if (!blob) {
@@ -97,7 +98,7 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 reject(new Error(`Hardware compression crashed: ${err.message}`));
             }
         }).catch(err => {
-            reject(new Error('Browser hardware decoder refused the file (Memory limit or unsupported color profile).'));
+            reject(new Error('Browser hardware decoder refused the file (Memory limit).'));
             console.error(err);
         });
     });
@@ -134,7 +135,7 @@ function uploadWithProgress(file, authStr) {
     });
 }
 
-// --- FEATURE 1: AI GENERATED SEO (WITH AUTO-RETRY) ---
+// --- FEATURE 1: AI GENERATED SEO (WITH AUTO-RETRY & PRE-COMPRESSION) ---
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
     for (let i = 0; i < retries; i++) {
         const response = await fetch(url, options);
@@ -165,11 +166,17 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         return;
     }
     
-    statusMessage.innerText = 'Analyzing photo and generating SEO optimization...';
+    statusMessage.innerText = 'Preparing image for AI analysis...';
     const file = fileInput.files[0];
     
     try {
-        const imagePart = await fileToGenerativePart(file);
+        // NEW: Compress the image to a small 1024px thumbnail BEFORE sending to AI. 
+        // Bypasses the Base64 memory crash entirely!
+        const aiThumbnail = await compressImage(file, 1024, 1024, 0.7);
+        const imagePart = await fileToGenerativePart(aiThumbnail);
+        
+        statusMessage.innerText = 'Analyzing photo and generating SEO optimization...';
+
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
         const response = await fetchWithRetry(`[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$){creds.gemini}`, {
@@ -259,7 +266,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
             
-            // Clear the deck for the next shot
             document.getElementById('imageInput').value = '';
             document.getElementById('wpTitle').value = '';
             document.getElementById('wpAltText').value = '';
