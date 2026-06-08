@@ -141,8 +141,8 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        // Swapped to the highly stable 1.5-flash model to prevent 503 timeouts
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${creds.gemini}`, {
+        // Reverted to the active gemini-2.5-flash model
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -199,7 +199,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         const altText = document.getElementById('wpAltText').value;
         const description = document.getElementById('wpDescription').value;
         
-        // Safety fallback: if dropdown is empty due to previous 404, default to 38
         const categorySelect = document.getElementById('categoryInput');
         const categoryId = categorySelect.value ? parseInt(categorySelect.value) : 38;
 
