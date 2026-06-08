@@ -41,19 +41,21 @@ function fileToGenerativePart(file) {
     });
 }
 
-// --- INVISIBLE CANVAS COMPRESSION (MOBILE MEMORY OPTIMIZED) ---
+// --- INVISIBLE CANVAS COMPRESSION (HARDWARE ACCELERATED) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-        const img = new Image();
-        
-        img.onload = () => {
-            // Free up the memory pointer immediately to keep Android happy
-            URL.revokeObjectURL(img.src);
-            
-            try {
-                let width = img.width;
-                let height = img.height;
+        // Modern approach: Bypasses the DOM and uses hardware-accelerated decoding
+        if (!window.createImageBitmap) {
+            reject(new Error('Your browser does not support modern image compression.'));
+            return;
+        }
 
+        createImageBitmap(file).then(bitmap => {
+            try {
+                let width = bitmap.width;
+                let height = bitmap.height;
+
+                // Calculate aspect ratio
                 if (width > height) {
                     if (width > maxWidth) {
                         height = Math.round((height * maxWidth) / width);
@@ -71,11 +73,15 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 
-                ctx.drawImage(img, 0, 0, width, height);
+                // Draw the hardware-decoded bitmap onto the canvas
+                ctx.drawImage(bitmap, 0, 0, width, height);
 
                 canvas.toBlob((blob) => {
+                    // Clean up the bitmap from memory immediately
+                    bitmap.close(); 
+                    
                     if (!blob) {
-                        reject(new Error('Mobile browser memory limit reached during final compression.'));
+                        reject(new Error('Canvas blob generation failed.'));
                         return;
                     }
                     const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
@@ -85,22 +91,15 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                     });
                     resolve(compressedFile);
                 }, 'image/jpeg', quality);
+                
             } catch (err) {
-                reject(new Error(`Canvas processing crashed: ${err.message}`));
+                bitmap.close();
+                reject(new Error(`Hardware compression crashed: ${err.message}`));
             }
-        };
-
-        img.onerror = () => {
-            URL.revokeObjectURL(img.src);
-            reject(new Error('Browser refused to load the image into the canvas.'));
-        };
-
-        // Create a lightweight memory pointer instead of reading the massive file
-        try {
-            img.src = URL.createObjectURL(file);
-        } catch (err) {
-            reject(new Error(`Failed to create object URL: ${err.message}`));
-        }
+        }).catch(err => {
+            reject(new Error('Browser hardware decoder refused the file (Memory limit or unsupported color profile).'));
+            console.error(err);
+        });
     });
 }
 
@@ -173,7 +172,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
+        const response = await fetchWithRetry(`[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$){creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -236,7 +235,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        const updateUrl = `https://airscapephotos.com/wp-json/wp/v2/media/${newMediaId}`;
+        const updateUrl = `[https://airscapephotos.com/wp-json/wp/v2/media/$](https://airscapephotos.com/wp-json/wp/v2/media/$){newMediaId}`;
         const updateResponse = await fetch(updateUrl, {
             method: 'POST', 
             headers: {
