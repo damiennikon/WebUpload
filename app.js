@@ -26,7 +26,7 @@ function getCredentials() {
     };
 }
 
-// Convert image binary to Base64 format for Gemini API pipeline (WITH ERROR FIX)
+// Convert image binary to Base64 format for Gemini API pipeline
 function fileToGenerativePart(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -40,24 +40,20 @@ function fileToGenerativePart(file) {
                 reject(new Error("Failed to process file into text format."));
             }
         };
-        // Catch silent mobile crashes instead of returning 'undefined'
         reader.onerror = () => reject(new Error("Mobile browser blocked file read for AI."));
         reader.readAsDataURL(file);
     });
 }
 
-// --- INVISIBLE CANVAS COMPRESSION (HARDWARE ACCELERATED) ---
+// --- HYBRID CANVAS COMPRESSION (HARDWARE + DOM FALLBACK) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-        if (!window.createImageBitmap) {
-            reject(new Error('Your browser does not support modern image compression.'));
-            return;
-        }
-
-        createImageBitmap(file).then(bitmap => {
+        
+        // Helper to handle the actual resizing math and canvas drawing
+        const doCanvasCompression = (imgSource) => {
             try {
-                let width = bitmap.width;
-                let height = bitmap.height;
+                let width = imgSource.width;
+                let height = imgSource.height;
 
                 if (width > height) {
                     if (width > maxWidth) {
@@ -76,10 +72,10 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 
-                ctx.drawImage(bitmap, 0, 0, width, height);
+                ctx.drawImage(imgSource, 0, 0, width, height);
 
                 canvas.toBlob((blob) => {
-                    bitmap.close(); 
+                    if (imgSource.close) imgSource.close(); // Clean up bitmap if it exists
                     
                     if (!blob) {
                         reject(new Error('Canvas blob generation failed.'));
@@ -94,13 +90,42 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                 }, 'image/jpeg', quality);
                 
             } catch (err) {
-                bitmap.close();
-                reject(new Error(`Hardware compression crashed: ${err.message}`));
+                if (imgSource.close) imgSource.close();
+                reject(new Error(`Compression process crashed: ${err.message}`));
             }
-        }).catch(err => {
-            reject(new Error('Browser hardware decoder refused the file (Memory limit).'));
-            console.error(err);
-        });
+        };
+
+        // Fallback method (ObjectURL + DOM Image)
+        const runFallbackMethod = () => {
+            console.warn("Using ObjectURL fallback compression...");
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(img.src);
+                doCanvasCompression(img);
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(img.src);
+                reject(new Error('Browser refused to load the image into memory via fallback.'));
+            };
+            try {
+                img.src = URL.createObjectURL(file);
+            } catch (err) {
+                reject(new Error(`Fallback object URL failed: ${err.message}`));
+            }
+        };
+
+        // Plan A: Try Hardware Acceleration
+        if (window.createImageBitmap) {
+            createImageBitmap(file).then(bitmap => {
+                doCanvasCompression(bitmap);
+            }).catch(err => {
+                // If the hardware decoder hits the memory cap, silently switch to Plan B
+                runFallbackMethod();
+            });
+        } else {
+            // If browser doesn't support hardware decoding at all
+            runFallbackMethod();
+        }
     });
 }
 
@@ -108,7 +133,10 @@ function compressImage(file, maxWidth, maxHeight, quality) {
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', "https://airscapephotos.com/wp-json/wp/v2/media", true);
+        // Strict string literal to prevent markdown mangling
+        const wpEndpoint = "https://airscapephotos.com/wp-json/wp/v2/media";
+        
+        xhr.open('POST', wpEndpoint, true);
         xhr.setRequestHeader('Authorization', authStr);
 
         xhr.upload.onprogress = (e) => {
@@ -135,7 +163,7 @@ function uploadWithProgress(file, authStr) {
     });
 }
 
-// --- FEATURE 1: AI GENERATED SEO (WITH AUTO-RETRY & PRE-COMPRESSION) ---
+// --- FEATURE 1: AI GENERATED SEO ---
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
     for (let i = 0; i < retries; i++) {
         const response = await fetch(url, options);
@@ -170,8 +198,6 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     const file = fileInput.files[0];
     
     try {
-        // NEW: Compress the image to a small 1024px thumbnail BEFORE sending to AI. 
-        // Bypasses the Base64 memory crash entirely!
         const aiThumbnail = await compressImage(file, 1024, 1024, 0.7);
         const imagePart = await fileToGenerativePart(aiThumbnail);
         
@@ -179,7 +205,10 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
 
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        const response = await fetchWithRetry(`[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$){creds.gemini}`, {
+        // Pure string concatenation to defeat markdown mangling bugs
+        const geminiUrl = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + creds.gemini;
+
+        const response = await fetchWithRetry(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -242,7 +271,9 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        const updateUrl = `[https://airscapephotos.com/wp-json/wp/v2/media/$](https://airscapephotos.com/wp-json/wp/v2/media/$){newMediaId}`;
+        // Pure string concatenation
+        const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId;
+        
         const updateResponse = await fetch(updateUrl, {
             method: 'POST', 
             headers: {
@@ -266,6 +297,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
             
+            // Clear the deck for the next shot
             document.getElementById('imageInput').value = '';
             document.getElementById('wpTitle').value = '';
             document.getElementById('wpAltText').value = '';
