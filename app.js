@@ -7,14 +7,11 @@ document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     setTimeout(() => { document.getElementById('settingsStatus').innerText = ''; }, 3000);
 });
 
-// Auto-populate input boxes & Load Dynamic Categories
+// Auto-populate input boxes if credentials exist on this device
 window.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('wpUser')) document.getElementById('settingUser').value = localStorage.getItem('wpUser');
     if (localStorage.getItem('wpPass')) document.getElementById('settingPass').value = localStorage.getItem('wpPass');
     if (localStorage.getItem('geminiKey')) document.getElementById('settingGemini').value = localStorage.getItem('geminiKey');
-    
-    // NEW ADDITION: Fetch Dynamic Categories on Load
-    fetchCategories();
 });
 
 // Structural helper to safely grab dynamic keys
@@ -27,25 +24,6 @@ function getCredentials() {
         wpAuth: user && pass ? 'Basic ' + btoa(`${user}:${pass}`) : null,
         gemini: gemini || null
     };
-}
-
-// Fetch dynamic categories from WordPress to populate the dropdown
-async function fetchCategories() {
-    try {
-        // Explicitly strict string to prevent markdown link conversion
-        const catUrl = "https://airscapephotos.com/wp-json/wp/v2/media_category?per_page=100";
-        const response = await fetch(catUrl);
-        if (response.ok) {
-            const categories = await response.json();
-            const select = document.getElementById('categoryInput');
-            // Clear hardcoded HTML options and replace with live data
-            select.innerHTML = categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('');
-        } else {
-            console.warn("Could not fetch dynamic categories. Falling back to default list.");
-        }
-    } catch (error) {
-        console.error("Category fetch error:", error);
-    }
 }
 
 // Convert image binary to Base64 format for Gemini API pipeline
@@ -116,13 +94,11 @@ function compressImage(file, maxWidth, maxHeight, quality) {
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        // Explicitly strict string
         xhr.open('POST', "https://airscapephotos.com/wp-json/wp/v2/media", true);
         xhr.setRequestHeader('Authorization', authStr);
         xhr.setRequestHeader('Content-Disposition', `attachment; filename="${file.name}"`);
         xhr.setRequestHeader('Content-Type', 'image/jpeg');
 
-        // NEW ADDITION: Upload progress feedback
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
                 const percent = Math.round((e.loaded / e.total) * 100);
@@ -165,7 +141,8 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
+        // Swapped to the highly stable 1.5-flash model to prevent 503 timeouts
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -209,49 +186,45 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
 
     let file = fileInput.files[0];
     
-    // NEW ADDITION & CHECK: Log original size
     const originalMb = (file.size / (1024 * 1024)).toFixed(2);
     statusMessage.innerText = `Compressing ${originalMb}MB image...`;
 
     try {
-        // Compress the image before uploading
         file = await compressImage(file, 2048, 2048, 0.8);
         
-        // CHECK: Verify dimension constraint and file size drop
         const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
         console.log(`Compression Success: Scaled to max 2048px. Size reduced from ${originalMb}MB to ${compressedMb}MB.`);
         
         const title = document.getElementById('wpTitle').value;
         const altText = document.getElementById('wpAltText').value;
         const description = document.getElementById('wpDescription').value;
-        const categoryId = document.getElementById('categoryInput').value;
+        
+        // Safety fallback: if dropdown is empty due to previous 404, default to 38
+        const categorySelect = document.getElementById('categoryInput');
+        const categoryId = categorySelect.value ? parseInt(categorySelect.value) : 38;
 
-        // STEP 1: Upload Raw Binary Image using new Progress logic
         const imageData = await uploadWithProgress(file, creds.wpAuth);
         const newMediaId = imageData.id;
-        const liveImageUrl = imageData.source_url; // Grab the URL for the preview
+        const liveImageUrl = imageData.source_url; 
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        // STEP 2: Update the uploaded image with SEO and Category data via JSON
-        // Explicit strict string formatting
         const updateUrl = `https://airscapephotos.com/wp-json/wp/v2/media/${newMediaId}`;
         const updateResponse = await fetch(updateUrl, {
-            method: 'POST', // Note: WP REST API allows POST to update existing endpoints
+            method: 'POST', 
             headers: {
                 'Authorization': creds.wpAuth,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 title: title,
-                alt_text: altText, // CHECK: Verified correct WP REST API key
+                alt_text: altText, 
                 description: description,
-                media_category: [parseInt(categoryId)] // CHECK: Verified array of integers
+                media_category: [categoryId] 
             })
         });
 
         if (updateResponse.ok) {
-            // NEW ADDITION: Post-upload preview and logging stats
             statusMessage.innerHTML = `
                 <div style="color: green; margin-bottom: 10px;">Success! Image is live.</div>
                 <div style="font-size: 12px; color: #555; margin-bottom: 10px;">
