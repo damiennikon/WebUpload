@@ -1,12 +1,20 @@
-// --- CACHE BUSTING ALERT ---
-alert("New App.js is successfully running! Version 3.0 (XHR Unified)");
+// --- CACHE BUSTER & SW EXTERMINATOR ---
+alert("Version 5.0 loaded! Firing FormData WAF Bypass pipeline.");
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        for(let registration of registrations) {
+            registration.unregister();
+        }
+    });
+}
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     localStorage.setItem('wpUser', document.getElementById('settingUser').value.trim());
     localStorage.setItem('wpPass', document.getElementById('settingPass').value.trim());
     localStorage.setItem('geminiKey', document.getElementById('settingGemini').value.trim());
-    document.getElementById('settingsStatus').innerText = 'Credentials saved securely on this device!';
+    document.getElementById('settingsStatus').innerText = 'Credentials saved securely!';
     setTimeout(() => { document.getElementById('settingsStatus').innerText = ''; }, 3000);
 });
 
@@ -26,15 +34,13 @@ function getCredentials() {
         try {
             auth = 'Basic ' + btoa(unescape(encodeURIComponent(`${user}:${pass}`)));
         } catch (e) {
-            console.error("Credentials encoding failed", e);
-            alert("Error: Your WordPress username or password contains invalid characters.");
+            alert("Error: Your WordPress credentials contain invalid characters.");
         }
     }
+    // Scrub the gemini key of ALL hidden spaces, newlines, or invisible characters
+    const cleanGemini = gemini ? gemini.replace(/[\s\r\n]+/g, '').trim() : null;
     
-    return {
-        wpAuth: auth,
-        gemini: gemini || null
-    };
+    return { wpAuth: auth, gemini: cleanGemini };
 }
 
 function fileToGenerativePart(file) {
@@ -44,11 +50,9 @@ function fileToGenerativePart(file) {
             if (reader.result) {
                 const base64Data = reader.result.split(',')[1];
                 resolve({ inlineData: { data: base64Data, mimeType: file.type } });
-            } else {
-                reject(new Error("Failed to process file into text format."));
-            }
+            } else reject(new Error("Failed to process file."));
         };
-        reader.onerror = () => reject(new Error("Mobile browser blocked file read for AI."));
+        reader.onerror = () => reject(new Error("Browser blocked file read."));
         reader.readAsDataURL(file);
     });
 }
@@ -68,7 +72,6 @@ function getJpegDimensions(file) {
             let offset = 2;
             while (offset < view.byteLength - 2) {
                 const marker = view.getUint16(offset, false);
-                
                 if (
                     (marker >= 0xFFC0 && marker <= 0xFFC3) ||
                     (marker >= 0xFFC5 && marker <= 0xFFC7) ||
@@ -81,13 +84,12 @@ function getJpegDimensions(file) {
                 }
                 
                 if ((marker >= 0xFFE0 && marker <= 0xFFEF) || marker === 0xFFDB || marker === 0xFFC4 || marker === 0xFFDD || marker === 0xFFFE) {
-                    const length = view.getUint16(offset + 2, false);
-                    offset += 2 + length;
+                    offset += 2 + view.getUint16(offset + 2, false);
                 } else {
                     offset += 1;
                 }
             }
-            reject(new Error("Dimensions not found in chunk."));
+            reject(new Error("Dimensions not found."));
         };
         reader.onerror = () => reject(new Error("File read error."));
         reader.readAsArrayBuffer(slice);
@@ -97,147 +99,98 @@ function getJpegDimensions(file) {
 // --- HYBRID CANVAS COMPRESSION ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise(async (resolve, reject) => {
-        let targetW = maxWidth;
-        let targetH = maxHeight;
-        let hasPrecalcDims = false;
+        let targetW = maxWidth, targetH = maxHeight, hasPrecalcDims = false;
 
         try {
             const dims = await getJpegDimensions(file);
-            let w = dims.width;
-            let h = dims.height;
-
+            let w = dims.width, h = dims.height;
             if (w > h) {
-                if (w > maxWidth) {
-                    h = Math.round((h * maxWidth) / w);
-                    w = maxWidth;
-                }
+                if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth; }
             } else {
-                if (h > maxHeight) {
-                    w = Math.round((w * maxHeight) / h);
-                    h = maxHeight;
-                }
+                if (h > maxHeight) { w = Math.round((w * maxHeight) / h); h = maxHeight; }
             }
-            targetW = w;
-            targetH = h;
-            hasPrecalcDims = true;
+            targetW = w; targetH = h; hasPrecalcDims = true;
         } catch (err) {
-            console.warn("Dimension pre-calc skipped: ", err.message);
+            console.warn("Pre-calc skipped:", err.message);
         }
 
         const doCanvasCompression = (imgSource, objectUrlToRevoke = null) => {
             try {
-                let width = imgSource.width;
-                let height = imgSource.height;
-
+                let width = imgSource.width, height = imgSource.height;
                 if (width > height) {
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
+                    if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; }
                 } else {
-                    if (height > maxHeight) {
-                        width = Math.round((width * maxHeight) / height);
-                        height = maxHeight;
-                    }
+                    if (height > maxHeight) { width = Math.round((width * maxHeight) / height); height = maxHeight; }
                 }
 
                 const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
+                canvas.width = width; canvas.height = height;
                 const ctx = canvas.getContext('2d');
-                
                 ctx.drawImage(imgSource, 0, 0, width, height);
                 
                 if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
 
                 canvas.toBlob((blob) => {
                     if (imgSource.close) imgSource.close();
-                    
-                    if (!blob) {
-                        reject(new Error('Canvas blob generation failed.'));
-                        return;
-                    }
-                    const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
-                    const compressedFile = new File([blob], newFileName, {
-                        type: 'image/jpeg',
-                        lastModified: Date.now()
-                    });
-                    resolve(compressedFile);
+                    if (!blob) return reject(new Error('Canvas blob failed.'));
+                    resolve(new File([blob], file.name.replace(/\.[^/.]+$/, ".jpg"), { type: 'image/jpeg' }));
                 }, 'image/jpeg', quality);
                 
             } catch (err) {
                 if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
                 if (imgSource.close) imgSource.close();
-                reject(new Error(`Compression process crashed: ${err.message}`));
+                reject(new Error(`Crash: ${err.message}`));
             }
         };
 
         const runFallbackMethod = () => {
             const img = new Image();
             const objUrl = URL.createObjectURL(file);
-            
-            img.onload = () => {
-                doCanvasCompression(img, objUrl);
-            };
+            img.onload = () => doCanvasCompression(img, objUrl);
             img.onerror = () => {
                 URL.revokeObjectURL(objUrl);
-                reject(new Error('Browser refused to load the image into memory via fallback.'));
+                reject(new Error('Fallback decode failed.'));
             };
             img.src = objUrl;
         };
 
         if (window.createImageBitmap) {
-            const bitmapOptions = hasPrecalcDims ? { 
-                resizeWidth: targetW, 
-                resizeHeight: targetH, 
-                resizeQuality: 'high' 
-            } : {};
-
-            createImageBitmap(file, bitmapOptions).then(bitmap => {
-                doCanvasCompression(bitmap);
-            }).catch(err => {
-                runFallbackMethod();
-            });
+            createImageBitmap(file, hasPrecalcDims ? { resizeWidth: targetW, resizeHeight: targetH, resizeQuality: 'high' } : {})
+                .then(doCanvasCompression).catch(runFallbackMethod);
         } else {
             runFallbackMethod();
         }
     });
 }
 
-// --- UNIFIED XHR PIPELINE (Bypasses Service Worker Fetch Bugs) ---
-function xhrPostWithRetry(url, headers, body, retries = 3, delay = 1000) {
+// --- UNIFIED XHR PIPELINE (Bypasses SW interception) ---
+function xhrPost(url, headers, body) {
     return new Promise((resolve, reject) => {
-        const attempt = (currentRetry, currentDelay) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', url, true);
-            for (let key in headers) {
-                xhr.setRequestHeader(key, headers[key]);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        for (let key in headers) {
+            xhr.setRequestHeader(key, headers[key]);
+        }
+        
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(JSON.parse(xhr.responseText));
+            } else {
+                reject(new Error(`API Error: ${xhr.status} on ${url}`));
             }
-            
-            xhr.onload = () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    resolve(JSON.parse(xhr.responseText));
-                } else if (xhr.status >= 500 && currentRetry < retries) {
-                    document.getElementById('statusMessage').innerText = `Server busy. Auto-retrying (Attempt ${currentRetry + 1}/${retries})...`;
-                    setTimeout(() => attempt(currentRetry + 1, currentDelay * 2), currentDelay);
-                } else {
-                    let errorMsg = `API Error: ${xhr.status}`;
-                    try {
-                        const errJson = JSON.parse(xhr.responseText);
-                        if (errJson.message) errorMsg += ` - ${errJson.message}`;
-                        else if (errJson.error && errJson.error.message) errorMsg += ` - ${errJson.error.message}`;
-                    } catch(e) {}
-                    reject(new Error(errorMsg));
-                }
-            };
-            xhr.onerror = () => reject(new Error("Network Error. Check connection or CORS."));
-            xhr.send(JSON.stringify(body));
         };
-        attempt(0, delay);
+        xhr.onerror = () => reject(new Error("Network Error. Check connection or CORS."));
+        
+        // If body is FormData, send directly. If Object, send as JSON.
+        if (body instanceof FormData) {
+            xhr.send(body); 
+        } else {
+            xhr.send(JSON.stringify(body));
+        }
     });
 }
 
-function uploadWithProgress(file, authStr) {
+function uploadImageFile(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         const wpEndpoint = "https://airscapephotos.com/wp-json/wp/v2/media";
@@ -248,7 +201,7 @@ function uploadWithProgress(file, authStr) {
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
                 const percent = Math.round((e.loaded / e.total) * 100);
-                document.getElementById('statusMessage').innerText = `Uploading to Server: ${percent}%`;
+                document.getElementById('statusMessage').innerText = `Uploading Image: ${percent}%`;
             }
         };
 
@@ -259,12 +212,10 @@ function uploadWithProgress(file, authStr) {
                 reject(new Error(`Upload Blocked: ${xhr.status}`));
             }
         };
-
         xhr.onerror = () => reject(new Error("Network Error during upload pipeline."));
         
         const formData = new FormData();
         formData.append('file', file, file.name);
-        
         xhr.send(formData);
     });
 }
@@ -275,32 +226,24 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     const statusMessage = document.getElementById('statusMessage');
     const creds = getCredentials();
     
-    if (!creds.gemini) {
-        statusMessage.innerText = 'Error: Please save your Gemini API Key in the settings first.';
-        return;
-    }
-    if (fileInput.files.length === 0) {
-        statusMessage.innerText = 'Please select a photo first.';
-        return;
-    }
+    if (!creds.gemini) return statusMessage.innerText = 'Error: Please save your Gemini API Key first.';
+    if (fileInput.files.length === 0) return statusMessage.innerText = 'Please select a photo first.';
     
     statusMessage.innerText = 'Preparing image for AI analysis...';
-    const file = fileInput.files[0];
     
     try {
-        const aiThumbnail = await compressImage(file, 1024, 1024, 0.7);
+        const aiThumbnail = await compressImage(fileInput.files[0], 1024, 1024, 0.7);
         const imagePart = await fileToGenerativePart(aiThumbnail);
         
-        statusMessage.innerText = 'Analyzing photo and generating SEO optimization...';
+        statusMessage.innerText = 'Generating SEO optimization...';
 
-        const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
-        const geminiUrl = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + creds.gemini;
+        const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown wrap.";
+        const geminiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(creds.gemini);
 
-        // Uses the new unified XHR pipeline to bypass Service Worker fetch traps
-        const result = await xhrPostWithRetry(geminiUrl, { 'Content-Type': 'application/json' }, {
+        const result = await xhrPost(geminiUrl, { 'Content-Type': 'application/json' }, {
             contents: [{ parts: [ { text: prompt }, imagePart ] }]
         });
-
+        
         let aiText = result.candidates[0].content.parts[0].text;
         aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
         
@@ -311,82 +254,69 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         
         statusMessage.innerText = 'SEO optimization ready for review.';
     } catch (error) {
-        statusMessage.innerText = `Error: ${error.message}`;
+        statusMessage.innerText = `SEO Failed: ${error.message}`;
         console.error(error);
     }
 });
 
-// --- FEATURE 2: TARGETED GALLERY UPLOAD ---
+// --- FEATURE 2: TARGETED GALLERY UPLOAD (WAF BYPASS) ---
 document.getElementById('uploadButton').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
     const creds = getCredentials();
 
-    if (!creds.wpAuth) {
-        statusMessage.innerText = 'Error: Please save your WordPress credentials in the settings first.';
-        return;
-    }
-    if (fileInput.files.length === 0) {
-        statusMessage.innerText = 'Please select a file first.';
-        return;
-    }
+    if (!creds.wpAuth) return statusMessage.innerText = 'Error: Please save your WordPress credentials first.';
+    if (fileInput.files.length === 0) return statusMessage.innerText = 'Please select a file first.';
 
     let file = fileInput.files[0];
     const originalMb = (file.size / (1024 * 1024)).toFixed(2);
     statusMessage.innerText = `Compressing ${originalMb}MB image...`;
 
     try {
+        // Step 1: Compress the image safely
         file = await compressImage(file, 2048, 2048, 0.8);
         const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
         
-        const title = document.getElementById('wpTitle').value;
-        const altText = document.getElementById('wpAltText').value;
-        const description = document.getElementById('wpDescription').value;
-        const categorySelect = document.getElementById('categoryInput');
-        const categoryId = categorySelect.value ? parseInt(categorySelect.value) : 38;
-
-        const imageData = await uploadWithProgress(file, creds.wpAuth);
+        // Step 2: Upload raw image
+        const imageData = await uploadImageFile(file, creds.wpAuth);
         const newMediaId = imageData.id;
         const liveImageUrl = imageData.source_url; 
         
-        statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
+        statusMessage.innerText = 'Image saved! Slipping metadata past firewall...';
 
-        // WAF Bypass Trick: Append ?_method=POST and override header to slip past Cloudflare blocks
-        const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId + "?_method=POST";
-        const updateHeaders = {
-            'Authorization': creds.wpAuth,
-            'Content-Type': 'application/json',
-            'X-HTTP-Method-Override': 'POST'
-        };
+        // Step 3: WAF Bypass for Categories & Metadata
+        // By building a FormData object instead of JSON, Cloudflare sees this as a harmless HTML form submission, not an API attack!
+        const updateUrl = "https://airscapephotos.com/wp-json/wp/v2/media/" + newMediaId;
+        const metadataForm = new FormData();
+        
+        const titleVal = document.getElementById('wpTitle').value.trim();
+        const altVal = document.getElementById('wpAltText').value.trim();
+        const descVal = document.getElementById('wpDescription').value.trim();
+        const catVal = document.getElementById('categoryInput').value;
+        
+        if (titleVal) metadataForm.append('title', titleVal);
+        if (altVal) metadataForm.append('alt_text', altVal);
+        if (descVal) metadataForm.append('description', descVal);
+        if (catVal) metadataForm.append('categories', catVal);
 
-        try {
-            await xhrPostWithRetry(updateUrl, updateHeaders, {
-                title: title,
-                alt_text: altText, 
-                description: description,
-                categories: [categoryId] 
-            }, 0); 
+        // Send the FormData via XHR (browser automatically attaches correct multipart headers)
+        await xhrPost(updateUrl, { 'Authorization': creds.wpAuth }, metadataForm);
 
-            statusMessage.innerHTML = `
-                <div style="color: green; margin-bottom: 10px;">Success! Image is live.</div>
-                <div style="font-size: 12px; color: #555; margin-bottom: 10px;">
-                    Size reduced: ${originalMb}MB ➔ ${compressedMb}MB
-                </div>
-                <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
-            `;
-            
-            document.getElementById('imageInput').value = '';
-            document.getElementById('wpTitle').value = '';
-            document.getElementById('wpAltText').value = '';
-            document.getElementById('wpDescription').value = '';
-            document.getElementById('categoryInput').selectedIndex = 0;
-            
-        } catch (updateErr) {
-            statusMessage.innerText = `Uploaded safely to cloud, but category link failed. (${updateErr.message})`;
-        }
+        statusMessage.innerHTML = `
+            <div style="color: green; margin-bottom: 10px;">Success! Image & Metadata live on WordPress.</div>
+            <div style="font-size: 12px; color: #555; margin-bottom: 10px;">Size: ${originalMb}MB ➔ ${compressedMb}MB</div>
+            <img src="${liveImageUrl}" style="max-width: 100%; border-radius: 4px; border: 1px solid #ccc;" alt="Uploaded Preview">
+        `;
+        
+        // Clear inputs for next photo
+        document.getElementById('imageInput').value = '';
+        document.getElementById('wpTitle').value = '';
+        document.getElementById('wpAltText').value = '';
+        document.getElementById('wpDescription').value = '';
+        document.getElementById('categoryInput').selectedIndex = 0;
 
     } catch (error) {
-        statusMessage.innerText = `Error: ${error.message}`;
+        statusMessage.innerText = `Upload Failed: ${error.message}`;
         console.error(error);
     }
 });
