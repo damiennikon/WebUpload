@@ -41,52 +41,70 @@ function fileToGenerativePart(file) {
     });
 }
 
-// --- INVISIBLE CANVAS COMPRESSION ---
+// --- INVISIBLE CANVAS COMPRESSION (MOBILE BULLETPROOFED) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.readAsDataURL(file);
+        
         reader.onload = event => {
             const img = new Image();
-            img.src = event.target.result;
+            
+            // Set up handlers BEFORE assigning the source to avoid mobile race conditions
             img.onload = () => {
-                let width = img.width;
-                let height = img.height;
+                try {
+                    let width = img.width;
+                    let height = img.height;
 
-                if (width > height) {
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
+                    if (width > height) {
+                        if (width > maxWidth) {
+                            height = Math.round((height * maxWidth) / width);
+                            width = maxWidth;
+                        }
+                    } else {
+                        if (height > maxHeight) {
+                            width = Math.round((width * maxHeight) / height);
+                            height = maxHeight;
+                        }
                     }
-                } else {
-                    if (height > maxHeight) {
-                        width = Math.round((width * maxHeight) / height);
-                        height = maxHeight;
-                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Attempt to draw the image into the hidden canvas
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    canvas.toBlob((blob) => {
+                        if (!blob) {
+                            reject(new Error('Mobile browser memory limit reached. Canvas compression failed.'));
+                            return;
+                        }
+                        const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
+                        const compressedFile = new File([blob], newFileName, {
+                            type: 'image/jpeg',
+                            lastModified: Date.now()
+                        });
+                        resolve(compressedFile);
+                    }, 'image/jpeg', quality);
+                } catch (err) {
+                    reject(new Error(`Canvas processing crashed: ${err.message}`));
                 }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-
-                canvas.toBlob((blob) => {
-                    if (!blob) {
-                        reject(new Error('Canvas compression failed.'));
-                        return;
-                    }
-                    const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
-                    const compressedFile = new File([blob], newFileName, {
-                        type: 'image/jpeg',
-                        lastModified: Date.now()
-                    });
-                    resolve(compressedFile);
-                }, 'image/jpeg', quality);
             };
-            img.onerror = error => reject(error);
+
+            // Catch the silent mobile crashes and output a real error
+            img.onerror = () => {
+                reject(new Error('Browser refused to load image into memory. The file may be too large or in an unsupported format (like HEIC).'));
+            };
+
+            img.src = event.target.result;
         };
-        reader.onerror = error => reject(error);
+
+        reader.onerror = () => {
+            reject(new Error('Failed to read the file from your device storage.'));
+        };
+
+        reader.readAsDataURL(file);
     });
 }
 
@@ -122,21 +140,16 @@ function uploadWithProgress(file, authStr) {
 }
 
 // --- FEATURE 1: AI GENERATED SEO (WITH AUTO-RETRY) ---
-
-// Helper function to automatically retry failed server requests
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
     for (let i = 0; i < retries; i++) {
         const response = await fetch(url, options);
         if (response.ok) return response;
         
-        // If it's a 500-level server error, wait and try again
         if (response.status >= 500 && response.status < 600) {
-            console.warn(`Server busy (${response.status}). Retrying in ${delay}ms... (Attempt ${i + 1} of ${retries})`);
             document.getElementById('statusMessage').innerText = `Server busy. Auto-retrying (Attempt ${i + 1}/3)...`;
             await new Promise(res => setTimeout(res, delay));
-            delay *= 2; // Double the wait time for the next attempt
+            delay *= 2; 
         } else {
-            // If it's a 400-level error (like a bad API key), fail immediately
             throw new Error(`API Error: ${response.status}`);
         }
     }
@@ -164,7 +177,6 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const imagePart = await fileToGenerativePart(file);
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        // Using our new self-healing fetch function
         const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${creds.gemini}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -214,7 +226,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         file = await compressImage(file, 2048, 2048, 0.8);
         
         const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
-        console.log(`Compression Success: Scaled to max 2048px. Size reduced from ${originalMb}MB to ${compressedMb}MB.`);
         
         const title = document.getElementById('wpTitle').value;
         const altText = document.getElementById('wpAltText').value;
@@ -253,7 +264,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
             
-            // --- NEW ADDITION: Clear the deck for the next shot ---
             document.getElementById('imageInput').value = '';
             document.getElementById('wpTitle').value = '';
             document.getElementById('wpAltText').value = '';
