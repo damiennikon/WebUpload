@@ -41,70 +41,66 @@ function fileToGenerativePart(file) {
     });
 }
 
-// --- INVISIBLE CANVAS COMPRESSION (MOBILE BULLETPROOFED) ---
+// --- INVISIBLE CANVAS COMPRESSION (MOBILE MEMORY OPTIMIZED) ---
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-        const reader = new FileReader();
+        const img = new Image();
         
-        reader.onload = event => {
-            const img = new Image();
+        img.onload = () => {
+            // Free up the memory pointer immediately to keep Android happy
+            URL.revokeObjectURL(img.src);
             
-            // Set up handlers BEFORE assigning the source to avoid mobile race conditions
-            img.onload = () => {
-                try {
-                    let width = img.width;
-                    let height = img.height;
+            try {
+                let width = img.width;
+                let height = img.height;
 
-                    if (width > height) {
-                        if (width > maxWidth) {
-                            height = Math.round((height * maxWidth) / width);
-                            width = maxWidth;
-                        }
-                    } else {
-                        if (height > maxHeight) {
-                            width = Math.round((width * maxHeight) / height);
-                            height = maxHeight;
-                        }
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
                     }
-
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    
-                    // Attempt to draw the image into the hidden canvas
-                    ctx.drawImage(img, 0, 0, width, height);
-
-                    canvas.toBlob((blob) => {
-                        if (!blob) {
-                            reject(new Error('Mobile browser memory limit reached. Canvas compression failed.'));
-                            return;
-                        }
-                        const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
-                        const compressedFile = new File([blob], newFileName, {
-                            type: 'image/jpeg',
-                            lastModified: Date.now()
-                        });
-                        resolve(compressedFile);
-                    }, 'image/jpeg', quality);
-                } catch (err) {
-                    reject(new Error(`Canvas processing crashed: ${err.message}`));
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
                 }
-            };
 
-            // Catch the silent mobile crashes and output a real error
-            img.onerror = () => {
-                reject(new Error('Browser refused to load image into memory. The file may be too large or in an unsupported format (like HEIC).'));
-            };
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                
+                ctx.drawImage(img, 0, 0, width, height);
 
-            img.src = event.target.result;
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('Mobile browser memory limit reached during final compression.'));
+                        return;
+                    }
+                    const newFileName = file.name.replace(/\.[^/.]+$/, ".jpg");
+                    const compressedFile = new File([blob], newFileName, {
+                        type: 'image/jpeg',
+                        lastModified: Date.now()
+                    });
+                    resolve(compressedFile);
+                }, 'image/jpeg', quality);
+            } catch (err) {
+                reject(new Error(`Canvas processing crashed: ${err.message}`));
+            }
         };
 
-        reader.onerror = () => {
-            reject(new Error('Failed to read the file from your device storage.'));
+        img.onerror = () => {
+            URL.revokeObjectURL(img.src);
+            reject(new Error('Browser refused to load the image into the canvas.'));
         };
 
-        reader.readAsDataURL(file);
+        // Create a lightweight memory pointer instead of reading the massive file
+        try {
+            img.src = URL.createObjectURL(file);
+        } catch (err) {
+            reject(new Error(`Failed to create object URL: ${err.message}`));
+        }
     });
 }
 
@@ -264,6 +260,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 <img src="${liveImageUrl}" style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ccc; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="Uploaded Preview">
             `;
             
+            // Clear the deck for the next shot
             document.getElementById('imageInput').value = '';
             document.getElementById('wpTitle').value = '';
             document.getElementById('wpAltText').value = '';
