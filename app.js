@@ -1,6 +1,5 @@
 // --- CACHE BUSTING ALERT ---
-// This will pop up immediately if the browser successfully loads this new file
-alert("New App.js is successfully running! Version 2.0");
+alert("New App.js is successfully running! Version 3.0 (XHR Unified)");
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -25,7 +24,6 @@ function getCredentials() {
     let auth = null;
     if (user && pass) {
         try {
-            // Safe base64 encoding that will not crash on hidden formatting characters
             auth = 'Basic ' + btoa(unescape(encodeURIComponent(`${user}:${pass}`)));
         } catch (e) {
             console.error("Credentials encoding failed", e);
@@ -55,11 +53,11 @@ function fileToGenerativePart(file) {
     });
 }
 
-// --- JPEG HEADER PARSER (RAM SAFE - UPGRADED MARKERS) ---
+// --- JPEG HEADER PARSER ---
 function getJpegDimensions(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        const slice = file.slice(0, 128 * 1024); // Read first 128KB
+        const slice = file.slice(0, 128 * 1024); 
         
         reader.onload = function(e) {
             const view = new DataView(e.target.result);
@@ -71,7 +69,6 @@ function getJpegDimensions(file) {
             while (offset < view.byteLength - 2) {
                 const marker = view.getUint16(offset, false);
                 
-                // Expanded SOF markers for maximum compatibility
                 if (
                     (marker >= 0xFFC0 && marker <= 0xFFC3) ||
                     (marker >= 0xFFC5 && marker <= 0xFFC7) ||
@@ -83,7 +80,6 @@ function getJpegDimensions(file) {
                     return resolve({ width, height });
                 }
                 
-                // Skip over other metadata chunks
                 if ((marker >= 0xFFE0 && marker <= 0xFFEF) || marker === 0xFFDB || marker === 0xFFC4 || marker === 0xFFDD || marker === 0xFFFE) {
                     const length = view.getUint16(offset + 2, false);
                     offset += 2 + length;
@@ -208,7 +204,39 @@ function compressImage(file, maxWidth, maxHeight, quality) {
     });
 }
 
-// --- STANDARD UPLOAD LOGIC ---
+// --- UNIFIED XHR PIPELINE (Bypasses Service Worker Fetch Bugs) ---
+function xhrPostWithRetry(url, headers, body, retries = 3, delay = 1000) {
+    return new Promise((resolve, reject) => {
+        const attempt = (currentRetry, currentDelay) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            for (let key in headers) {
+                xhr.setRequestHeader(key, headers[key]);
+            }
+            
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(JSON.parse(xhr.responseText));
+                } else if (xhr.status >= 500 && currentRetry < retries) {
+                    document.getElementById('statusMessage').innerText = `Server busy. Auto-retrying (Attempt ${currentRetry + 1}/${retries})...`;
+                    setTimeout(() => attempt(currentRetry + 1, currentDelay * 2), currentDelay);
+                } else {
+                    let errorMsg = `API Error: ${xhr.status}`;
+                    try {
+                        const errJson = JSON.parse(xhr.responseText);
+                        if (errJson.message) errorMsg += ` - ${errJson.message}`;
+                        else if (errJson.error && errJson.error.message) errorMsg += ` - ${errJson.error.message}`;
+                    } catch(e) {}
+                    reject(new Error(errorMsg));
+                }
+            };
+            xhr.onerror = () => reject(new Error("Network Error. Check connection or CORS."));
+            xhr.send(JSON.stringify(body));
+        };
+        attempt(0, delay);
+    });
+}
+
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -242,22 +270,6 @@ function uploadWithProgress(file, authStr) {
 }
 
 // --- FEATURE 1: AI GENERATED SEO ---
-async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
-    for (let i = 0; i < retries; i++) {
-        const response = await fetch(url, options);
-        if (response.ok) return response;
-        
-        if (response.status >= 500 && response.status < 600) {
-            document.getElementById('statusMessage').innerText = `Server busy. Auto-retrying (Attempt ${i + 1}/3)...`;
-            await new Promise(res => setTimeout(res, delay));
-            delay *= 2; 
-        } else {
-            throw new Error(`API Error: ${response.status}`);
-        }
-    }
-    throw new Error('Google API servers are currently unreachable after multiple attempts.');
-}
-
 document.getElementById('seoBtn').addEventListener('click', async () => {
     const fileInput = document.getElementById('imageInput');
     const statusMessage = document.getElementById('statusMessage');
@@ -282,20 +294,14 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         statusMessage.innerText = 'Analyzing photo and generating SEO optimization...';
 
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
-
         const geminiUrl = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + creds.gemini;
 
-        const response = await fetchWithRetry(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [ { text: prompt }, imagePart ] }]
-            })
+        // Uses the new unified XHR pipeline to bypass Service Worker fetch traps
+        const result = await xhrPostWithRetry(geminiUrl, { 'Content-Type': 'application/json' }, {
+            contents: [{ parts: [ { text: prompt }, imagePart ] }]
         });
 
-        const result = await response.json();
         let aiText = result.candidates[0].content.parts[0].text;
-        
         aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
         
         const seoData = JSON.parse(aiText);
@@ -326,19 +332,16 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
     }
 
     let file = fileInput.files[0];
-    
     const originalMb = (file.size / (1024 * 1024)).toFixed(2);
     statusMessage.innerText = `Compressing ${originalMb}MB image...`;
 
     try {
         file = await compressImage(file, 2048, 2048, 0.8);
-        
         const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
         
         const title = document.getElementById('wpTitle').value;
         const altText = document.getElementById('wpAltText').value;
         const description = document.getElementById('wpDescription').value;
-        
         const categorySelect = document.getElementById('categoryInput');
         const categoryId = categorySelect.value ? parseInt(categorySelect.value) : 38;
 
@@ -348,23 +351,22 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId;
-        
-        const updateResponse = await fetch(updateUrl, {
-            method: 'POST', 
-            headers: {
-                'Authorization': creds.wpAuth,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
+        // WAF Bypass Trick: Append ?_method=POST and override header to slip past Cloudflare blocks
+        const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId + "?_method=POST";
+        const updateHeaders = {
+            'Authorization': creds.wpAuth,
+            'Content-Type': 'application/json',
+            'X-HTTP-Method-Override': 'POST'
+        };
+
+        try {
+            await xhrPostWithRetry(updateUrl, updateHeaders, {
                 title: title,
                 alt_text: altText, 
                 description: description,
                 categories: [categoryId] 
-            })
-        });
+            }, 0); 
 
-        if (updateResponse.ok) {
             statusMessage.innerHTML = `
                 <div style="color: green; margin-bottom: 10px;">Success! Image is live.</div>
                 <div style="font-size: 12px; color: #555; margin-bottom: 10px;">
@@ -379,8 +381,8 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
             document.getElementById('wpDescription').value = '';
             document.getElementById('categoryInput').selectedIndex = 0;
             
-        } else {
-            statusMessage.innerText = `Uploaded safely to cloud, but category link failed.`;
+        } catch (updateErr) {
+            statusMessage.innerText = `Uploaded safely to cloud, but category link failed. (${updateErr.message})`;
         }
 
     } catch (error) {
