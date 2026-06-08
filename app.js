@@ -91,15 +91,11 @@ function compressImage(file, maxWidth, maxHeight, quality) {
 }
 
 // --- NEW STANDARD UPLOAD LOGIC ---
-// Helper: Upload file using XMLHttpRequest and FormData to bypass CORS strictly
 function uploadWithProgress(file, authStr) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', "https://airscapephotos.com/wp-json/wp/v2/media", true);
         xhr.setRequestHeader('Authorization', authStr);
-        
-        // Removed Content-Disposition and Content-Type.
-        // The browser automatically generates the correct, CORS-friendly headers for FormData.
 
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
@@ -118,7 +114,6 @@ function uploadWithProgress(file, authStr) {
 
         xhr.onerror = () => reject(new Error("Network Error during upload pipeline."));
         
-        // Package the file in standard FormData
         const formData = new FormData();
         formData.append('file', file, file.name);
         
@@ -225,7 +220,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
                 title: title,
                 alt_text: altText, 
                 description: description,
-                media_category: [categoryId] 
+                categories: [categoryId] // <-- THE 1-WORD FIX IS HERE
             })
         });
 
