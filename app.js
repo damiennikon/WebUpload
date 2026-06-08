@@ -1,3 +1,7 @@
+// --- CACHE BUSTING ALERT ---
+// This will pop up immediately if the browser successfully loads this new file
+alert("New App.js is successfully running! Version 2.0");
+
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
     localStorage.setItem('wpUser', document.getElementById('settingUser').value.trim());
@@ -18,8 +22,19 @@ function getCredentials() {
     const pass = localStorage.getItem('wpPass');
     const gemini = localStorage.getItem('geminiKey');
     
+    let auth = null;
+    if (user && pass) {
+        try {
+            // Safe base64 encoding that will not crash on hidden formatting characters
+            auth = 'Basic ' + btoa(unescape(encodeURIComponent(`${user}:${pass}`)));
+        } catch (e) {
+            console.error("Credentials encoding failed", e);
+            alert("Error: Your WordPress username or password contains invalid characters.");
+        }
+    }
+    
     return {
-        wpAuth: user && pass ? 'Basic ' + btoa(`${user}:${pass}`) : null,
+        wpAuth: auth,
         gemini: gemini || null
     };
 }
@@ -101,7 +116,7 @@ function compressImage(file, maxWidth, maxHeight, quality) {
                     w = maxWidth;
                 }
             } else {
-                if (h > maxHeight) { // FIXED TYPO HERE: changed 'height' to 'h'
+                if (h > maxHeight) {
                     w = Math.round((w * maxHeight) / h);
                     h = maxHeight;
                 }
@@ -268,7 +283,6 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
 
         const prompt = "Analyze this image as an expert SEO specialist. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description. Output your response strictly as a raw JSON object with the keys: 'title', 'alt_text', and 'description'. Do not include any markdown code block wrap or formatting characters (like backticks or ```json).";
 
-        // FIXED: Using the valid 2.5-flash model and pure string concatenation
         const geminiUrl = "[https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=)" + creds.gemini;
 
         const response = await fetchWithRetry(geminiUrl, {
@@ -282,8 +296,7 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
         const result = await response.json();
         let aiText = result.candidates[0].content.parts[0].text;
         
-        aiText = aiText.replace(/
-```json/g, '').replace(/```/g, '').trim();
+        aiText = aiText.replace(/```json/g, '').replace(/```/g, '').trim();
         
         const seoData = JSON.parse(aiText);
         document.getElementById('wpTitle').value = seoData.title || '';
@@ -335,7 +348,6 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
         
         statusMessage.innerText = 'Image saved! Linking SEO and Categories...';
 
-        // FIXED: Pure string concatenation
         const updateUrl = "[https://airscapephotos.com/wp-json/wp/v2/media/](https://airscapephotos.com/wp-json/wp/v2/media/)" + newMediaId;
         
         const updateResponse = await fetch(updateUrl, {
