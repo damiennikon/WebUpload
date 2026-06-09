@@ -1,10 +1,9 @@
-// --- VERSION 9.0 ---
+// --- VERSION 10.0 ---
 // Fix 1: EXIF strip uses typed array slicing — fast enough for 15MB+ Galaxy files.
 // Fix 2: Error messages never expose the Gemini API key URL.
-// Fix 3: Category dropdown now uses hardcoded fallback IDs (51-55) when REST
-//         endpoint is unavailable, so categories always work regardless of plugin
-//         REST support. Updated IDs: Aircraft=51, Astrophotography=52,
-//         Animals=55, Cityscape=54, Landscape=53.
+// Fix 3: Switched from Jeffrey-wp (no REST support) to Media Library Assistant.
+//         Taxonomy is now attachment_category with REST API fully working.
+//         New IDs: Aircraft=56, Astrophotography=57, Animals=58, Landscape=59, Cityscape=60.
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -47,11 +46,11 @@ function getCredentials() {
 //           'show_in_rest' => true, 'rest_base' => 'media_category'));
 //   }, 11);
 const FALLBACK_CATEGORIES = [
-    { id: 51, name: 'Aircraft' },
-    { id: 52, name: 'Astrophotography' },
-    { id: 55, name: 'Animals' },
-    { id: 54, name: 'Cityscape' },
-    { id: 53, name: 'Landscape' }
+    { id: 56, name: 'Aircraft' },
+    { id: 57, name: 'Astrophotography' },
+    { id: 58, name: 'Animals' },
+    { id: 59, name: 'Landscape' },
+    { id: 60, name: 'Cityscape' }
 ];
 
 async function fetchCategories() {
@@ -64,7 +63,7 @@ async function fetchCategories() {
 
     // Then attempt live fetch from REST API — overwrites fallback if successful
     try {
-        const response = await fetch("https://airscapephotos.com/wp-json/wp/v2/media_category?per_page=100");
+        const response = await fetch("https://airscapephotos.com/wp-json/wp/v2/attachment_category?per_page=100");
         if (response.ok) {
             const categories = await response.json();
             if (categories.length > 0) {
@@ -365,7 +364,7 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
             title: document.getElementById('wpTitle').value.trim(),
             alt_text: document.getElementById('wpAltText').value.trim(),
             description: document.getElementById('wpDescription').value.trim(),
-            media_category: [categoryId]
+            attachment_category: [categoryId]
         };
 
         const updateUrl = "https://airscapephotos.com/wp-json/wp/v2/media/" + newMediaId;
