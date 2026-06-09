@@ -1,6 +1,9 @@
-// --- VERSION 6.0 ---
-// Key fix: Replaced broken hybrid compression with a reliable blob URL + Image element
-// decode pipeline that handles Samsung Galaxy EXIF-rotated, high-res camera JPEGs.
+// --- VERSION 7.0 ---
+// Root cause identified: Samsung Galaxy writes EXIF orientation=0, which is outside
+// the valid spec range of 1-8. Android Chrome's decoder rejects the file at the EXIF
+// parsing stage before it even tries to decode pixels — hence img.onerror on every path.
+// Fix: Strip the APP1 (EXIF) segment from the raw JPEG bytes before decode.
+// A clean JPEG with no EXIF loads fine in every browser.
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -55,56 +58,117 @@ async function fetchCategories() {
     }
 }
 
-// --- CORE IMAGE COMPRESSION ---
-// Uses blob URL + HTMLImageElement for the decode step.
-// This is the most compatible method across Android Chrome and Samsung Browser,
-// handling EXIF rotation, high-res files, and unusual colour profiles without crashing.
-function compressImage(file, maxWidth, maxHeight, quality) {
-    return new Promise((resolve, reject) => {
-        const objectUrl = URL.createObjectURL(file);
-        const img = new Image();
+// --- EXIF STRIPPER ---
+// Removes the APP1 (EXIF) segment from raw JPEG bytes.
+// Samsung Galaxy phones write orientation=0, which is invalid per the JPEG spec
+// (valid range is 1-8). Android Chrome rejects files with this tag entirely.
+// Stripping APP1 produces a clean JPEG that loads in every browser.
+function stripExif(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const data = new Uint8Array(e.target.result);
 
-        img.onload = () => {
-            URL.revokeObjectURL(objectUrl);
+            // Verify this is actually a JPEG (starts with FF D8)
+            if (data[0] !== 0xFF || data[1] !== 0xD8) {
+                resolve(file); // Not a JPEG, return as-is
+                return;
+            }
 
-            let width = img.naturalWidth;
-            let height = img.naturalHeight;
+            const result = [data[0], data[1]]; // Keep SOI marker
+            let i = 2;
 
-            // Scale down proportionally to fit within maxWidth x maxHeight
-            if (width > height) {
-                if (width > maxWidth) {
-                    height = Math.round((height * maxWidth) / width);
-                    width = maxWidth;
+            while (i < data.length - 1) {
+                if (data[i] !== 0xFF) { i++; continue; }
+
+                const marker = data[i + 1];
+
+                // APP1 = 0xE1 — this is the EXIF block, skip it entirely
+                if (marker === 0xE1) {
+                    const segLen = (data[i + 2] << 8) | data[i + 3];
+                    console.log('Stripped EXIF APP1 block (' + segLen + ' bytes) from ' + file.name);
+                    i += 2 + segLen;
+                    continue;
                 }
-            } else {
-                if (height > maxHeight) {
-                    width = Math.round((width * maxHeight) / height);
-                    height = maxHeight;
+
+                // Start of scan (SOS) = 0xDA — rest is raw image data, copy everything to end
+                if (marker === 0xDA) {
+                    for (let j = i; j < data.length; j++) result.push(data[j]);
+                    break;
+                }
+
+                // All other segments — calculate length and copy them through
+                if (i + 3 < data.length) {
+                    const segLen = (data[i + 2] << 8) | data[i + 3];
+                    for (let j = i; j < i + 2 + segLen && j < data.length; j++) result.push(data[j]);
+                    i += 2 + segLen;
+                } else {
+                    result.push(data[i]);
+                    i++;
                 }
             }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
+            const cleanBlob = new Blob([new Uint8Array(result)], { type: 'image/jpeg' });
+            resolve(new File([cleanBlob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+        };
+        reader.onerror = () => resolve(file); // On any read error, fall back to original file
+        reader.readAsArrayBuffer(file);
+    });
+}
 
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0, width, height);
+// --- CORE IMAGE COMPRESSION ---
+// Strips bad EXIF first, then decodes via blob URL + HTMLImageElement,
+// then resamples to target dimensions on canvas.
+function compressImage(file, maxWidth, maxHeight, quality) {
+    return new Promise((resolve, reject) => {
 
-            canvas.toBlob((blob) => {
-                if (!blob) {
-                    return reject(new Error('Canvas failed to produce a blob. File may be corrupted.'));
+        // Step 1: Strip invalid EXIF before attempting any decode
+        stripExif(file).then((cleanFile) => {
+            const objectUrl = URL.createObjectURL(cleanFile);
+            const img = new Image();
+
+            img.onload = () => {
+                URL.revokeObjectURL(objectUrl);
+
+                let width = img.naturalWidth;
+                let height = img.naturalHeight;
+
+                // Scale down proportionally to fit within maxWidth x maxHeight
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
                 }
-                const newFileName = file.name.replace(/\.[^/.]+$/, '.jpg');
-                resolve(new File([blob], newFileName, { type: 'image/jpeg', lastModified: Date.now() }));
-            }, 'image/jpeg', quality);
-        };
 
-        img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error('Image decode failed. The file may be unsupported or corrupted.'));
-        };
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
 
-        img.src = objectUrl;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        return reject(new Error('Canvas failed to produce a blob.'));
+                    }
+                    const newFileName = file.name.replace(/\.[^/.]+$/, '.jpg');
+                    resolve(new File([blob], newFileName, { type: 'image/jpeg', lastModified: Date.now() }));
+                }, 'image/jpeg', quality);
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error('Image decode failed even after EXIF strip. File may be corrupted.'));
+            };
+
+            img.src = objectUrl;
+        });
     });
 }
 
