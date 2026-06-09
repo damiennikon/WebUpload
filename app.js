@@ -1,9 +1,9 @@
-// --- VERSION 7.0 ---
-// Root cause identified: Samsung Galaxy writes EXIF orientation=0, which is outside
-// the valid spec range of 1-8. Android Chrome's decoder rejects the file at the EXIF
-// parsing stage before it even tries to decode pixels — hence img.onerror on every path.
-// Fix: Strip the APP1 (EXIF) segment from the raw JPEG bytes before decode.
-// A clean JPEG with no EXIF loads fine in every browser.
+// --- VERSION 8.0 ---
+// Fix 1: EXIF strip now uses typed array slicing instead of a push loop —
+//         the push loop was too slow for large files on Android, causing a timeout
+//         before the blob URL was created, which triggered img.onerror.
+// Fix 2: Error messages never include the request URL, so the Gemini API key
+//         is never exposed on screen.
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -59,59 +59,78 @@ async function fetchCategories() {
 }
 
 // --- EXIF STRIPPER ---
-// Removes the APP1 (EXIF) segment from raw JPEG bytes.
-// Samsung Galaxy phones write orientation=0, which is invalid per the JPEG spec
-// (valid range is 1-8). Android Chrome rejects files with this tag entirely.
-// Stripping APP1 produces a clean JPEG that loads in every browser.
+// Removes APP1 (EXIF) segments from raw JPEG bytes using typed array slicing.
+// Samsung Galaxy phones write orientation=0 which is outside the valid spec
+// range of 1-8. Android Chrome rejects files with this tag entirely.
+// Uses Buffer.concat-style typed array approach — fast enough for 15MB+ files.
 function stripExif(file) {
     return new Promise((resolve) => {
         const reader = new FileReader();
         reader.onload = (e) => {
-            const data = new Uint8Array(e.target.result);
+            try {
+                const src = new Uint8Array(e.target.result);
 
-            // Verify this is actually a JPEG (starts with FF D8)
-            if (data[0] !== 0xFF || data[1] !== 0xD8) {
-                resolve(file); // Not a JPEG, return as-is
-                return;
+                // Verify JPEG SOI marker FF D8
+                if (src[0] !== 0xFF || src[1] !== 0xD8) {
+                    resolve(file);
+                    return;
+                }
+
+                // Collect non-EXIF segments as typed array slices (no push loop)
+                const chunks = [src.slice(0, 2)]; // SOI
+                let i = 2;
+                let stripped = false;
+
+                while (i < src.length - 3) {
+                    if (src[i] !== 0xFF) { i++; continue; }
+
+                    const marker = src[i + 1];
+
+                    // SOS marker — everything from here is raw scan data, take it all
+                    if (marker === 0xDA) {
+                        chunks.push(src.slice(i));
+                        break;
+                    }
+
+                    const segLen = (src[i + 2] << 8) | src[i + 3];
+                    const segEnd = i + 2 + segLen;
+
+                    if (marker === 0xE1) {
+                        // APP1 = EXIF — skip this segment entirely
+                        console.log('Stripped EXIF block: ' + segLen + ' bytes');
+                        stripped = true;
+                    } else {
+                        // All other segments — keep them
+                        chunks.push(src.slice(i, segEnd));
+                    }
+
+                    i = segEnd;
+                }
+
+                if (!stripped) {
+                    // No EXIF found — return original file untouched
+                    resolve(file);
+                    return;
+                }
+
+                // Merge chunks into a single Uint8Array efficiently
+                const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+                const output = new Uint8Array(totalLen);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    output.set(chunk, offset);
+                    offset += chunk.length;
+                }
+
+                const cleanBlob = new Blob([output], { type: 'image/jpeg' });
+                resolve(new File([cleanBlob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
+
+            } catch (err) {
+                console.warn('EXIF strip error, using original:', err);
+                resolve(file);
             }
-
-            const result = [data[0], data[1]]; // Keep SOI marker
-            let i = 2;
-
-            while (i < data.length - 1) {
-                if (data[i] !== 0xFF) { i++; continue; }
-
-                const marker = data[i + 1];
-
-                // APP1 = 0xE1 — this is the EXIF block, skip it entirely
-                if (marker === 0xE1) {
-                    const segLen = (data[i + 2] << 8) | data[i + 3];
-                    console.log('Stripped EXIF APP1 block (' + segLen + ' bytes) from ' + file.name);
-                    i += 2 + segLen;
-                    continue;
-                }
-
-                // Start of scan (SOS) = 0xDA — rest is raw image data, copy everything to end
-                if (marker === 0xDA) {
-                    for (let j = i; j < data.length; j++) result.push(data[j]);
-                    break;
-                }
-
-                // All other segments — calculate length and copy them through
-                if (i + 3 < data.length) {
-                    const segLen = (data[i + 2] << 8) | data[i + 3];
-                    for (let j = i; j < i + 2 + segLen && j < data.length; j++) result.push(data[j]);
-                    i += 2 + segLen;
-                } else {
-                    result.push(data[i]);
-                    i++;
-                }
-            }
-
-            const cleanBlob = new Blob([new Uint8Array(result)], { type: 'image/jpeg' });
-            resolve(new File([cleanBlob], file.name, { type: 'image/jpeg', lastModified: Date.now() }));
         };
-        reader.onerror = () => resolve(file); // On any read error, fall back to original file
+        reader.onerror = () => resolve(file);
         reader.readAsArrayBuffer(file);
     });
 }
@@ -214,7 +233,19 @@ function xhrPost(url, headers, body, onProgress) {
                     reject(new Error('Server response was not valid JSON. Status: ' + xhr.status));
                 }
             } else {
-                reject(new Error('Server error: ' + xhr.status + ' on ' + url));
+                // Never include the URL in the error — it may contain API keys
+                const friendlyErrors = {
+                    400: 'Bad request (400) — check your credentials or file format.',
+                    401: 'Unauthorised (401) — check your WordPress credentials.',
+                    403: 'Forbidden (403) — check user permissions or security plugin settings.',
+                    405: 'Method not allowed (405) — API endpoint may have changed.',
+                    413: 'File too large (413) — try a smaller image.',
+                    429: 'Rate limit hit (429) — wait a moment then try again.',
+                    500: 'Server error (500) — WordPress or Gemini server issue.',
+                    503: 'Service unavailable (503) — try again shortly.'
+                };
+                const msg = friendlyErrors[xhr.status] || 'Request failed with status ' + xhr.status;
+                reject(new Error(msg));
             }
         };
 
