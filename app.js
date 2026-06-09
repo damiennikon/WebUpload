@@ -50,7 +50,8 @@ const FALLBACK_CATEGORIES = [
     { id: 57, name: 'Astrophotography' },
     { id: 58, name: 'Animals' },
     { id: 59, name: 'Landscape' },
-    { id: 60, name: 'Cityscape' }
+    { id: 60, name: 'Cityscape' },
+    { id: 61, name: 'Gear' }
 ];
 
 async function fetchCategories() {
