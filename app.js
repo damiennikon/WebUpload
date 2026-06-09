@@ -158,57 +158,75 @@ function stripExif(file) {
 }
 
 // --- CORE IMAGE COMPRESSION ---
-// Strips bad EXIF first, then decodes via blob URL + HTMLImageElement,
-// then resamples to target dimensions on canvas.
+// Strategy:
+//   1. Strip bad EXIF (fixes Samsung orientation=0 crash)
+//   2. Try createImageBitmap — hardware accelerated, low RAM peak.
+//   3. Fall back to Image() + blob URL if createImageBitmap fails.
+// All helper functions are self-contained within compressImage to avoid scope issues.
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
-
-        // Step 1: Strip invalid EXIF before attempting any decode
         stripExif(file).then((cleanFile) => {
-            const objectUrl = URL.createObjectURL(cleanFile);
-            const img = new Image();
 
-            img.onload = () => {
-                URL.revokeObjectURL(objectUrl);
-
-                let width = img.naturalWidth;
-                let height = img.naturalHeight;
-
-                // Scale down proportionally to fit within maxWidth x maxHeight
-                if (width > height) {
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
+            // Scale dimensions proportionally to fit within max bounds
+            function getTargetDims(srcW, srcH) {
+                let w = srcW, h = srcH;
+                if (w > h) {
+                    if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth; }
                 } else {
-                    if (height > maxHeight) {
-                        width = Math.round((width * maxHeight) / height);
-                        height = maxHeight;
-                    }
+                    if (h > maxHeight) { w = Math.round((w * maxHeight) / h); h = maxHeight; }
                 }
+                return { w, h };
+            }
 
-                const canvas = document.createElement('canvas');
-                canvas.width = width;
-                canvas.height = height;
+            // Draw image source onto canvas and export as JPEG File
+            function drawAndExport(source, w, h) {
+                return new Promise((res, rej) => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(source, 0, 0, w, h);
+                    canvas.toBlob((blob) => {
+                        if (source.close) source.close();
+                        if (!blob) return rej(new Error('Canvas failed to produce a blob.'));
+                        const newName = file.name.replace(/\.[^/.]+$/, '.jpg');
+                        res(new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() }));
+                    }, 'image/jpeg', quality);
+                });
+            }
 
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
+            // Path B: Image() + blob URL — fully self-contained, no external deps
+            function imageFallback() {
+                return new Promise((res, rej) => {
+                    const objectUrl = URL.createObjectURL(cleanFile);
+                    const img = new Image();
+                    img.onload = () => {
+                        URL.revokeObjectURL(objectUrl);
+                        const { w, h } = getTargetDims(img.naturalWidth, img.naturalHeight);
+                        drawAndExport(img, w, h).then(res).catch(rej);
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(objectUrl);
+                        rej(new Error('Image decode failed. Try exporting at a smaller size from Lightroom.'));
+                    };
+                    img.src = objectUrl;
+                });
+            }
 
-                canvas.toBlob((blob) => {
-                    if (!blob) {
-                        return reject(new Error('Canvas failed to produce a blob.'));
-                    }
-                    const newFileName = file.name.replace(/\.[^/.]+$/, '.jpg');
-                    resolve(new File([blob], newFileName, { type: 'image/jpeg', lastModified: Date.now() }));
-                }, 'image/jpeg', quality);
-            };
-
-            img.onerror = () => {
-                URL.revokeObjectURL(objectUrl);
-                reject(new Error('Image decode failed even after EXIF strip. File may be corrupted.'));
-            };
-
-            img.src = objectUrl;
+            // Path A: createImageBitmap — hardware accelerated, preferred for large files
+            if (window.createImageBitmap) {
+                createImageBitmap(cleanFile)
+                    .then((bitmap) => {
+                        const { w, h } = getTargetDims(bitmap.width, bitmap.height);
+                        return drawAndExport(bitmap, w, h);
+                    })
+                    .then(resolve)
+                    .catch((err) => {
+                        console.warn('createImageBitmap failed (' + err.message + '), trying Image() fallback');
+                        imageFallback().then(resolve).catch(reject);
+                    });
+            } else {
+                imageFallback().then(resolve).catch(reject);
+            }
         });
     });
 }
