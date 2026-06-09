@@ -1,9 +1,10 @@
-// --- VERSION 8.0 ---
-// Fix 1: EXIF strip now uses typed array slicing instead of a push loop —
-//         the push loop was too slow for large files on Android, causing a timeout
-//         before the blob URL was created, which triggered img.onerror.
-// Fix 2: Error messages never include the request URL, so the Gemini API key
-//         is never exposed on screen.
+// --- VERSION 9.0 ---
+// Fix 1: EXIF strip uses typed array slicing — fast enough for 15MB+ Galaxy files.
+// Fix 2: Error messages never expose the Gemini API key URL.
+// Fix 3: Category dropdown now uses hardcoded fallback IDs (51-55) when REST
+//         endpoint is unavailable, so categories always work regardless of plugin
+//         REST support. Updated IDs: Aircraft=51, Astrophotography=52,
+//         Animals=55, Cityscape=54, Landscape=53.
 
 // --- SECURE KEY STORAGE LOGIC ---
 document.getElementById('saveSettingsBtn').addEventListener('click', () => {
@@ -39,22 +40,44 @@ function getCredentials() {
 }
 
 // --- DYNAMIC CATEGORY LOADER ---
+// Falls back to hardcoded current IDs if the REST endpoint is unavailable.
+// To fix the REST 404 permanently, add this snippet to your WordPress functions.php:
+//   add_action('init', function() {
+//       register_taxonomy('media_category', 'attachment', array(
+//           'show_in_rest' => true, 'rest_base' => 'media_category'));
+//   }, 11);
+const FALLBACK_CATEGORIES = [
+    { id: 51, name: 'Aircraft' },
+    { id: 52, name: 'Astrophotography' },
+    { id: 55, name: 'Animals' },
+    { id: 54, name: 'Cityscape' },
+    { id: 53, name: 'Landscape' }
+];
+
 async function fetchCategories() {
+    const select = document.getElementById('categoryInput');
+
+    // Always load fallback first so dropdown is never empty
+    select.innerHTML = FALLBACK_CATEGORIES
+        .map(cat => '<option value="' + cat.id + '">' + cat.name + '</option>')
+        .join('');
+
+    // Then attempt live fetch from REST API — overwrites fallback if successful
     try {
         const response = await fetch("https://airscapephotos.com/wp-json/wp/v2/media_category?per_page=100");
         if (response.ok) {
             const categories = await response.json();
-            const select = document.getElementById('categoryInput');
             if (categories.length > 0) {
                 select.innerHTML = categories
                     .map(cat => '<option value="' + cat.id + '">' + cat.name + '</option>')
                     .join('');
+                console.log('Categories loaded live from REST API.');
             }
         } else {
-            console.warn("Could not fetch dynamic categories, keeping defaults.");
+            console.warn('REST API ' + response.status + ' for media_category — using fallback IDs.');
         }
     } catch (error) {
-        console.error("Category fetch error:", error);
+        console.warn('Category fetch failed, using fallback IDs:', error.message);
     }
 }
 
