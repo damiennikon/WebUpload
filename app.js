@@ -1,5 +1,6 @@
-// --- DLP FIELD UPLOADER v11.0 ---
+// --- DLP FIELD UPLOADER v12.0 ---
 // Rebranded to damienleydenphotography.au
+// v12: Compression now falls back to raw file if canvas pipeline fails (fixes Google Photos URI on Android)
 // Added: Blog Post tab with draft/publish, featured image, live category fetch
 // Preserved: EXIF strip, compression pipeline, Gemini SEO, XHR helper, error handling
 
@@ -106,7 +107,7 @@ async function fetchBlogCategories() {
 }
 
 // ─────────────────────────────────────────
-// EXIF STRIPPER (unchanged from v10)
+// EXIF STRIPPER
 // ─────────────────────────────────────────
 function stripExif(file) {
     return new Promise((resolve) => {
@@ -145,7 +146,8 @@ function stripExif(file) {
 }
 
 // ─────────────────────────────────────────
-// COMPRESSION (unchanged from v10)
+// COMPRESSION
+// Falls back to raw file if canvas pipeline fails (e.g. Google Photos URIs on Android)
 // ─────────────────────────────────────────
 function compressImage(file, maxWidth, maxHeight, quality) {
     return new Promise((resolve, reject) => {
@@ -195,13 +197,26 @@ function compressImage(file, maxWidth, maxHeight, quality) {
 }
 
 // ─────────────────────────────────────────
+// SAFE COMPRESS — tries compression, falls back to raw file if pipeline fails
+// Fixes Google Photos content URI decode errors on Android (Samsung Galaxy etc.)
+// ─────────────────────────────────────────
+async function safeCompress(file, maxWidth, maxHeight, quality) {
+    try {
+        return await compressImage(file, maxWidth, maxHeight, quality);
+    } catch (err) {
+        console.warn('Compression failed, falling back to raw file upload:', err.message);
+        return file;
+    }
+}
+
+// ─────────────────────────────────────────
 // GEMINI BASE64 HELPER
 // ─────────────────────────────────────────
 function fileToGenerativePart(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-            if (reader.result) resolve({ inlineData: { data: reader.result.split(',')[1], mimeType: 'image/jpeg' } });
+            if (reader.result) resolve({ inlineData: { data: reader.result.split(',')[1], mimeType: file.type || 'image/jpeg' } });
             else reject(new Error('FileReader returned empty result.'));
         };
         reader.onerror = () => reject(new Error('Browser blocked file read.'));
@@ -210,7 +225,7 @@ function fileToGenerativePart(file) {
 }
 
 // ─────────────────────────────────────────
-// XHR HELPER (unchanged from v10)
+// XHR HELPER
 // ─────────────────────────────────────────
 function xhrPost(url, headers, body, onProgress) {
     return new Promise((resolve, reject) => {
@@ -258,10 +273,11 @@ document.getElementById('seoBtn').addEventListener('click', async () => {
     const creds = getCredentials();
     if (!creds.gemini) return setStatus(statusEl, 'Save your Gemini API key first.', 'error');
     if (!fileInput.files.length) return setStatus(statusEl, 'Select a photo first.', 'error');
-    setStatus(statusEl, 'Compressing for AI analysis...');
+    setStatus(statusEl, 'Preparing image for AI analysis...');
     try {
-        const aiThumb = await compressImage(fileInput.files[0], 1024, 1024, 0.75);
-        const imagePart = await fileToGenerativePart(aiThumb);
+        // safeCompress: if compression fails on Android/Google Photos, uses raw file instead
+        const aiFile = await safeCompress(fileInput.files[0], 1024, 1024, 0.75);
+        const imagePart = await fileToGenerativePart(aiFile);
         setStatus(statusEl, 'Generating SEO with Gemini...');
         const prompt = 'Analyze this image as an expert SEO specialist for a photography website. Generate an optimized image Title, descriptive Alt Text for accessibility, and a detailed description suitable for a photo gallery. Output your response strictly as a raw JSON object with the keys: "title", "alt_text", and "description". Do not include any markdown formatting, code blocks, or backticks.';
         const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + creds.gemini;
@@ -287,11 +303,12 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
     const creds = getCredentials();
     if (!creds.wpAuth) return setStatus(statusEl, 'Save your WordPress credentials first.', 'error');
     if (!fileInput.files.length) return setStatus(statusEl, 'Select a file first.', 'error');
-    let file = fileInput.files[0];
-    const originalMb = (file.size / (1024 * 1024)).toFixed(2);
-    setStatus(statusEl, `Compressing ${originalMb}MB...`);
+    const originalFile = fileInput.files[0];
+    const originalMb = (originalFile.size / (1024 * 1024)).toFixed(2);
+    setStatus(statusEl, `Preparing ${originalMb}MB image...`);
     try {
-        file = await compressImage(file, 2048, 2048, 0.85);
+        // safeCompress: if compression fails on Android/Google Photos, uploads raw file instead
+        const file = await safeCompress(originalFile, 2048, 2048, 0.85);
         const compressedMb = (file.size / (1024 * 1024)).toFixed(2);
         const formData = new FormData();
         formData.append('file', file, file.name);
@@ -314,10 +331,13 @@ document.getElementById('uploadButton').addEventListener('click', async () => {
             },
             null
         );
+        const sizeNote = file.size < originalFile.size
+            ? `${originalMb}MB → ${compressedMb}MB`
+            : `${originalMb}MB (uploaded as-is)`;
         statusEl.innerHTML =
             `<div class="upload-preview">` +
             `<div style="color:var(--success);font-weight:600;margin-bottom:4px;">✓ Live in gallery</div>` +
-            `<div class="upload-preview-meta">${originalMb}MB → ${compressedMb}MB</div>` +
+            `<div class="upload-preview-meta">${sizeNote}</div>` +
             `<img src="${imageData.source_url}" alt="Upload preview">` +
             `</div>`;
         statusEl.className = 'status';
@@ -342,8 +362,9 @@ document.getElementById('blogDraftFromPhotoBtn').addEventListener('click', async
     if (!photoInput.files.length) return setStatus(statusEl, 'Select a photo in the Photo tab first.', 'error');
     setStatus(statusEl, 'Analysing photo with Gemini...');
     try {
-        const aiThumb = await compressImage(photoInput.files[0], 1024, 1024, 0.75);
-        const imagePart = await fileToGenerativePart(aiThumb);
+        // safeCompress: falls back to raw file if compression fails
+        const aiFile = await safeCompress(photoInput.files[0], 1024, 1024, 0.75);
+        const imagePart = await fileToGenerativePart(aiFile);
         const prompt = 'You are writing a short field notes blog post for a photography website. The author is Damien Leyden, a Queensland-based photographer who shoots astrophotography, wildlife, aviation, and landscape photography — often in the Scenic Rim region. Analyse this photo and write a short, casual, first-person blog post (150-250 words) about it. Output strictly as a raw JSON object with two keys: "title" (a concise blog post title) and "content" (the post body as plain paragraphs separated by \\n\\n, no markdown, no HTML). No backticks, no code blocks.';
         const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + creds.gemini;
         const result = await xhrPost(geminiUrl, { 'Content-Type': 'application/json' }, { contents: [{ parts: [{ text: prompt }, imagePart] }] }, null);
@@ -373,7 +394,6 @@ document.getElementById('blogPublishBtn').addEventListener('click', async () => 
     if (!title) return setStatus(statusEl, 'Add a title before publishing.', 'error');
     if (!rawContent) return setStatus(statusEl, 'Add some content before publishing.', 'error');
 
-    // Convert plain paragraphs to basic HTML blocks
     const content = rawContent
         .split(/\n\n+/)
         .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
@@ -388,7 +408,8 @@ document.getElementById('blogPublishBtn').addEventListener('click', async () => 
         const featuredFile = document.getElementById('blogFeaturedImage').files[0];
         if (featuredFile) {
             setStatus(statusEl, 'Uploading featured image...');
-            let imgFile = await compressImage(featuredFile, 2048, 2048, 0.85);
+            // safeCompress: falls back to raw file if compression fails on Android
+            const imgFile = await safeCompress(featuredFile, 2048, 2048, 0.85);
             const formData = new FormData();
             formData.append('file', imgFile, imgFile.name);
             const mediaData = await xhrPost(
@@ -402,11 +423,7 @@ document.getElementById('blogPublishBtn').addEventListener('click', async () => 
         }
 
         // Step 2: Create the post
-        const postBody = {
-            title,
-            content,
-            status: postStatus,
-        };
+        const postBody = { title, content, status: postStatus };
         if (categoryId) postBody.categories = [parseInt(categoryId)];
         if (featuredMediaId) postBody.featured_media = featuredMediaId;
 
@@ -424,7 +441,6 @@ document.getElementById('blogPublishBtn').addEventListener('click', async () => 
             : `<span style="color:var(--success);font-weight:600;">✓ ${label}</span>`;
         statusEl.className = 'status';
 
-        // Clear fields
         document.getElementById('blogTitle').value = '';
         document.getElementById('blogContent').value = '';
         document.getElementById('blogFeaturedImage').value = '';
