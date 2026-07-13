@@ -1,8 +1,3 @@
-// A simple pass-through service worker to satisfy PWA installation requirements
-self.addEventListener('install', (e) => {
-    self.skipWaiting();
-});
-
-self.addEventListener('activate', (e) => {
-    return self.clients.claim();
-});
+// Simple pass-through service worker for PWA installation
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
