@@ -1,10 +1,10 @@
 {
-  "name": "Airscape Photos Uploader",
-  "short_name": "Airscape",
+  "name": "DLP Field Uploader",
+  "short_name": "DLP Field",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f4f6f9",
-  "theme_color": "#0073aa",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
   "icons": [
     {
       "src": "icon.png",
