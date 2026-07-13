@@ -3,98 +3,423 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Airscape Dashboard</title>
-    
+    <title>DLP Field Uploader</title>
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#0073aa">
-    
+    <meta name="theme-color" content="#0a0e14">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+
     <style>
-        body { font-family: sans-serif; background: #f4f6f9; margin: 20px; color: #333; }
-        .panel { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        .settings-panel { background: #ffebee; border: 1px solid #ffcdd2; }
-        .workspace { display: flex; flex-wrap: wrap; gap: 30px; }
-        .workspace .panel { flex: 1; min-width: 300px; margin-bottom: 0; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; }
-        input[type="text"], input[type="password"], textarea, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        textarea { height: 100px; resize: vertical; }
-        button { background: #0073aa; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; width: 100%; margin-top: 10px; }
-        button:hover { background: #005177; }
-        #seoBtn { background: #23282d; }
-        #seoBtn:hover { background: #111; }
-        #saveSettingsBtn { background: #c62828; width: auto; margin-top: 0; }
-        #saveSettingsBtn:hover { background: #b71c1c; }
-        #statusMessage { margin-top: 15px; font-weight: bold; color: #0073aa; min-height: 20px; text-align: center; }
-        .settings-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-        .settings-row input { flex: 1; min-width: 200px; }
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:       #0a0e14;
+            --card:     #111820;
+            --border:   #1a2d42;
+            --amber:    #c8a96e;
+            --muted:    #8a9ab0;
+            --text:     #e8eaf0;
+            --success:  #4caf78;
+            --error:    #e05c5c;
+            --radius:   8px;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 0 0 40px;
+        }
+
+        /* ── HEADER ── */
+        .dlp-header {
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .dlp-header-title {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            color: var(--text);
+        }
+        .dlp-header-title span { color: var(--amber); }
+        .dlp-header-sub {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-top: 1px;
+        }
+
+        /* ── CREDENTIALS PANEL ── */
+        .creds-panel {
+            margin: 16px 16px 0;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        .creds-toggle {
+            width: 100%;
+            background: none;
+            border: none;
+            color: var(--muted);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 12px 16px;
+            text-align: left;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .creds-toggle:hover { color: var(--amber); }
+        .creds-toggle .chevron { transition: transform 0.2s; }
+        .creds-toggle.open .chevron { transform: rotate(180deg); }
+        .creds-body {
+            display: none;
+            padding: 0 16px 16px;
+            border-top: 1px solid var(--border);
+        }
+        .creds-body.open { display: block; }
+        .creds-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .creds-grid .full { grid-column: 1 / -1; }
+        .creds-save {
+            margin-top: 10px;
+            width: auto;
+            padding: 8px 20px;
+            background: var(--amber);
+            color: var(--bg);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+        }
+        .creds-save:hover { opacity: 0.85; }
+        .creds-status { font-size: 12px; color: var(--success); margin-top: 8px; min-height: 16px; }
+
+        /* ── TABS ── */
+        .tabs {
+            display: flex;
+            margin: 16px 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .tab-btn {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+            margin-bottom: -1px;
+        }
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active { color: var(--amber); border-bottom-color: var(--amber); }
+
+        /* ── TAB PANELS ── */
+        .tab-panel { display: none; padding: 16px; }
+        .tab-panel.active { display: block; }
+
+        /* ── CARDS ── */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        .card-label {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--amber);
+            margin-bottom: 12px;
+        }
+
+        /* ── FORM ELEMENTS ── */
+        .field { margin-bottom: 12px; }
+        .field:last-child { margin-bottom: 0; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--muted);
+            margin-bottom: 5px;
+            letter-spacing: 0.02em;
+        }
+        input[type="text"],
+        input[type="password"],
+        input[type="file"],
+        textarea,
+        select {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            padding: 9px 12px;
+            outline: none;
+            transition: border-color 0.15s;
+            -webkit-appearance: none;
+        }
+        input[type="text"]:focus,
+        input[type="password"]:focus,
+        textarea:focus,
+        select:focus { border-color: var(--amber); }
+        input[type="file"] {
+            padding: 8px 10px;
+            color: var(--muted);
+            cursor: pointer;
+        }
+        textarea { height: 120px; resize: vertical; }
+        select { cursor: pointer; }
+        select option { background: var(--card); }
+
+        /* ── BUTTONS ── */
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: var(--radius);
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            margin-top: 4px;
+            transition: opacity 0.15s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-amber { background: var(--amber); color: var(--bg); }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+        }
+        .btn-ghost:hover { border-color: var(--amber); color: var(--amber); opacity: 1; }
+
+        /* ── STATUS ── */
+        .status {
+            margin-top: 12px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--muted);
+            min-height: 20px;
+            text-align: center;
+            line-height: 1.5;
+        }
+        .status.success { color: var(--success); }
+        .status.error { color: var(--error); }
+
+        /* ── PUBLISH ROW ── */
+        .publish-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 4px;
+        }
+        .publish-row .btn { margin-top: 0; flex: 1; }
+        .draft-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted);
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .draft-toggle input { width: auto; }
+
+        /* ── PREVIEW ── */
+        .upload-preview img {
+            max-width: 100%;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            margin-top: 10px;
+        }
+        .upload-preview-meta {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 6px;
+        }
+
+        @media (max-width: 420px) {
+            .creds-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
 
-    <h2>Airscape Photos Workspace</h2>
-    
-    <div class="panel settings-panel">
-        <h3>⚙️ Local Credentials Setup</h3>
-        <p style="margin: 0 0 10px 0; font-size: 13px; color: #555;">Keys are saved safely in your own browser's local storage. They never touch a public server.</p>
-        <div class="settings-row">
-            <input type="text" id="settingUser" placeholder="WordPress Username (e.g., admin)">
-            <input type="password" id="settingPass" placeholder="WordPress Application Password">
-            <input type="password" id="settingGemini" placeholder="Gemini API Key">
-            <button id="saveSettingsBtn">Save Credentials</button>
+<header class="dlp-header">
+    <div>
+        <div class="dlp-header-title">DLP <span>Field</span></div>
+        <div class="dlp-header-sub">damienleydenphotography.au</div>
+    </div>
+</header>
+
+<!-- CREDENTIALS -->
+<div class="creds-panel">
+    <button class="creds-toggle" id="credsToggle">
+        ⚙ Credentials
+        <span class="chevron">▾</span>
+    </button>
+    <div class="creds-body" id="credsBody">
+        <div class="creds-grid">
+            <div class="field">
+                <label>WordPress Username</label>
+                <input type="text" id="settingUser" placeholder="e.g. damien_asp">
+            </div>
+            <div class="field">
+                <label>Application Password</label>
+                <input type="password" id="settingPass" placeholder="xxxx xxxx xxxx xxxx">
+            </div>
+            <div class="field full">
+                <label>Gemini API Key</label>
+                <input type="password" id="settingGemini" placeholder="AIza...">
+            </div>
         </div>
-        <div id="settingsStatus" style="margin-top: 8px; font-size: 13px; font-weight: bold; color: #c62828;"></div>
+        <button class="creds-save" id="saveSettingsBtn">Save</button>
+        <div class="creds-status" id="settingsStatus"></div>
+    </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="photo">📷 Photo</button>
+    <button class="tab-btn" data-tab="blog">✍ Blog Post</button>
+</div>
+
+<!-- ══════════════════════════════════════
+     PHOTO TAB
+══════════════════════════════════════ -->
+<div class="tab-panel active" id="tab-photo">
+
+    <div class="card">
+        <div class="card-label">Select & Categorise</div>
+        <div class="field">
+            <label>Photo</label>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+        <div class="field">
+            <label>Target Gallery</label>
+            <select id="categoryInput">
+                <option value="56">Aircraft</option>
+                <option value="57">Astrophotography</option>
+                <option value="58">Animals</option>
+                <option value="59">Landscape</option>
+                <option value="60">Cityscape</option>
+                <option value="61">Gear</option>
+            </select>
+        </div>
+        <button class="btn btn-ghost" id="seoBtn">✨ Generate SEO with AI</button>
     </div>
 
-    <div class="workspace">
-        <div class="panel">
-            <h3>1. Selection & Target</h3>
-            <div class="form-group">
-                <label for="imageInput">Choose Photo</label>
-                <input type="file" id="imageInput" accept="image/*">
-            </div>
-            
-            <div class="form-group">
-                <label for="categoryInput">Target Gallery Page</label>
-                <select id="categoryInput">
-                    <option value="39">Aircraft</option>
-                    <option value="41">Animals</option>
-                    <option value="38">Astrophotography</option>
-                    <option value="40">Cityscapes</option>
-                    <option value="42">Landscapes</option>
-                </select>
-            </div>
-            
-            <button id="seoBtn">✨ SEO Me</button>
+    <div class="card">
+        <div class="card-label">Review Metadata</div>
+        <div class="field">
+            <label>Title</label>
+            <input type="text" id="wpTitle" placeholder="Image title">
         </div>
+        <div class="field">
+            <label>Alt Text</label>
+            <input type="text" id="wpAltText" placeholder="Accessibility description">
+        </div>
+        <div class="field">
+            <label>Description</label>
+            <textarea id="wpDescription" placeholder="Gallery description"></textarea>
+        </div>
+        <button class="btn btn-amber" id="uploadButton">Upload to Gallery</button>
+        <div class="status" id="photoStatus"></div>
+    </div>
 
-        <div class="panel">
-            <h3>2. Review Metadata</h3>
-            <div class="form-group">
-                <label for="wpTitle">Image Title</label>
-                <input type="text" id="wpTitle">
-            </div>
-            <div class="form-group">
-                <label for="wpAltText">Alt Text (Accessibility)</label>
-                <input type="text" id="wpAltText">
-            </div>
-            <div class="form-group">
-                <label for="wpDescription">Description</label>
-                <textarea id="wpDescription"></textarea>
-            </div>
-            
-            <button id="uploadButton">Upload to Gallery</button>
-            <div id="statusMessage"></div>
+</div>
+
+<!-- ══════════════════════════════════════
+     BLOG TAB
+══════════════════════════════════════ -->
+<div class="tab-panel" id="tab-blog">
+
+    <div class="card">
+        <div class="card-label">Post Details</div>
+        <div class="field">
+            <label>Title</label>
+            <input type="text" id="blogTitle" placeholder="Post title">
+        </div>
+        <div class="field">
+            <label>Category</label>
+            <select id="blogCategory">
+                <option value="">— None —</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>Featured Image (optional)</label>
+            <input type="file" id="blogFeaturedImage" accept="image/*">
         </div>
     </div>
 
-    <script src="app.js"></script>
-    <script>
-        // Register the Service Worker for PWA Installation
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
-            .then(() => console.log('Service Worker Registered'));
-        }
-    </script>
+    <div class="card">
+        <div class="card-label">Content</div>
+        <div class="field">
+            <textarea id="blogContent" style="height:200px;" placeholder="Write your post here..."></textarea>
+        </div>
+        <button class="btn btn-ghost" id="blogDraftFromPhotoBtn">✨ Draft from Photo with AI</button>
+    </div>
+
+    <div class="card">
+        <div class="card-label">Publish</div>
+        <div class="publish-row">
+            <button class="btn btn-amber" id="blogPublishBtn">Publish Post</button>
+            <label class="draft-toggle">
+                <input type="checkbox" id="blogDraftToggle" checked>
+                Save as Draft
+            </label>
+        </div>
+        <div class="status" id="blogStatus"></div>
+    </div>
+
+</div>
+
+<script src="app.js"></script>
+<script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js')
+            .then(() => console.log('SW registered'));
+    }
+</script>
 </body>
 </html>
